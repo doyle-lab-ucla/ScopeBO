@@ -809,7 +809,7 @@ class ScopeBO:
 
                     # run the acquisition function
                     idx_sample, sample, list_position_sample = greedy_run(
-                        surrogate_model=surrogate_model, q=acquisition_samples, idx_test=idx_test, 
+                        surrogate_model=surrogate_model, q=acquisition_samples, objective_mode=objective_mode, idx_test=idx_test, 
                         test_x_torch=test_x_torch)
                     
                     # Update batch fantasy.
@@ -877,7 +877,7 @@ class ScopeBO:
         
         # add the old priority list again. Samples that have been used this run will be updated.
         df["priority"] = priority_list
-        
+
         # Assign a very low priority to already observed samples (-2)
         df.loc[df.index.isin(idx_train),"priority"] = -2
         

@@ -51,7 +51,7 @@ def explorative_run(surrogate_model, q, idx_test, test_x_torch):
     return best_samples, samples, list_positions_selected_variance
 
 
-def greedy_run(surrogate_model, q, idx_test, test_x_torch):
+def greedy_run(surrogate_model, q, objective_mode, idx_test, test_x_torch):
     """
     Fully exploitative acqusition function. Currently only implemented for mono-objective runs.
     Input:
@@ -71,7 +71,12 @@ def greedy_run(surrogate_model, q, idx_test, test_x_torch):
 
     # sort the posterior means
     sorted_means = means.tolist().copy()
-    sorted_means.sort(reverse=True)
+    if objective_mode[0].lower() == "max":
+        sorted_means.sort(reverse=True)
+    elif objective_mode[0].lower() == "min":
+        sorted_means.sort(reverse=False)
+    else:
+        print("No valid objective mode ('max' or 'min') given. Please check your input and run again.")
 
     # only keep the top scores (= batch size)
     selected_means = sorted_means[:q]
