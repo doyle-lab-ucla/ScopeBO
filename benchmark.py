@@ -23,11 +23,14 @@ class HiddenPrints:
         self._original_stdout = sys.stdout
         sys.stdout = open(os.devnull, 'w')
 
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout.close()
         sys.stdout = self._original_stdout
 
+
 class Benchmark:
+    """Class for generating benchmarking data and analyzing this data."""
 
     def __init__(self):
         pass
@@ -289,13 +292,17 @@ class Benchmark:
         print(f"Data collection finished! Results are saved in the subfolder {name_results}.")
 
 
-    def continue_data_collection(self, filename_labelled, objectives, objective_mode, copy_rounds, remaining_budget, batches, 
-            Vendi_pruning_fractions, seeds, name_results, name_prior_results, init_sampling_method, sample_threshold = None, enforce_dissimilarity=False, pruning_metric = "vendi", acquisition_function_mode = 'balanced', 
-            dft_filename = None, filename_prediction = "df_benchmark.csv", directory='.'):
+    def continue_data_collection(self, filename_labelled, objectives, objective_mode, copy_rounds, 
+                                 remaining_budget, batches, 
+                                 Vendi_pruning_fractions, seeds, name_results, name_prior_results, 
+                                 init_sampling_method, sample_threshold = None, enforce_dissimilarity=False, 
+                                 pruning_metric = "vendi", acquisition_function_mode = 'balanced', dft_filename = None, 
+                                 filename_prediction = "df_benchmark.csv", directory='.'):
         """
         Takes the first n rounds from a different run and continues them with the indicated settings. Otherwise, the same as collect_data().
         See the docstring of collect_data() for full details on the generated reports and most variables.
         NOTE: The function only works with the folder name_prior_results only contains one run (with different seeds)!
+        NOTE: The function also only works for mono-objective runs at the moment.
         -------------------------------------------------------------------------------------
         Additional parameters compared to collect_data():
 
@@ -361,7 +368,7 @@ class Benchmark:
 
                 for seed in range(seeds): 
 
-                   current_df = df_unlabelled.copy(deep=True)
+                    current_df = df_unlabelled.copy(deep=True)
 
                     # read in the prior results with the correct seed
                     prior_run_name = None
@@ -380,7 +387,7 @@ class Benchmark:
                     # same for the pruned samples
                     prior_cut = [smiles.encode().decode('unicode_escape') for round_list in [df_prior_data.loc[round,"cut_samples"] for round in df_prior_data.index[:copy_rounds]] for smiles in round_list]
 
-                    # typically there is no pruning in the first round of experiments (initiation), resulting in the list containing an empty element
+                    # typically there is no pruning in the first round of experiments (initiation), resulting in the list containing an empty element - delete that element
                     if "" in prior_cut:
                         prior_cut.remove("")
 
@@ -412,7 +419,7 @@ class Benchmark:
                         
                         else:
                             rounds = int(remaining_budget/batch)
-                    
+
                     # Run ScopeBO for these settings.
                     for round in range(rounds):
                             
@@ -423,7 +430,7 @@ class Benchmark:
                         else:
                             current_batch = batch
                             # Check if this will be a run with reduced batch size (due to the set budget).
-                            if round+1 == rounds and _remaining_budget % batch != 0:
+                            if round+1 == rounds and remaining_budget % batch != 0:
                                 current_batch = remaining_budget % batch
 
                         # Check if the Vendi_pruning_fraction is dynamic (meaning different fractions for each round)
