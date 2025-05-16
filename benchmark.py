@@ -40,8 +40,7 @@ class Benchmark:
             Vendi_pruning_fractions, seeds, name_results, init_sampling_method, sample_threshold = None, enforce_dissimilarity=False, pruning_metric = "vendi", acquisition_function_mode = 'balanced', 
             dft_filename = None, filename_prediction = "df_benchmark.csv", directory='.'):
         """
-        Runs the function for selected parameter ranges and records the results per round for 
-        each set of parameters.
+        Runs the function for selected parameter ranges and records the results per round for each set of parameters.
 
         Returns a number of csv files in a folder with the name name_results:
             Raw results:
@@ -51,11 +50,11 @@ class Benchmark:
                 indices of evaluated samples for each round ("eval_samples")
                 indices of samples cut by the Vendi cutoff for each round ("cut_samples")
 
-                Example output (batch size 3 and 2 objectives; 4 samples were pruned from the reaction space):
+                Example output (batch size 3 and 2 objectives; 5 samples were pruned from the reaction space):
 
                         objective_values        Vendi_score     samples     cut_samples
-                0       [[1,2],[1,5],[5,4]]     43              [3,5,12]    [5,3,1,35,5]
-                1       [[11,2],[11,5],[6,4]]   37              [5,17,1]    [4,9,7,24,51]
+                0       [[1,2,5],[1,5,12]]     43              [3,5,12]    [5,3,1,35,5]
+                1       [[11,2,11],[16,1,4]]   37              [5,17,1]    [4,9,7,24,51]
 
                 Whereas the index column corresponds to the round of experiments.
 
@@ -68,7 +67,9 @@ class Benchmark:
                 The entries are lists containing the results per round. There are files contain average values ("average") (across the different seeds) or 
                 the standard deviation ("stdev") (across the different seeds).
 
-                Example name: "benchmark_obj_av.csv" --> average objective value data
+                Example name: "benchmark_obj[names of the objectives]_av.csv" --> average objective value data
+                NOTE: The tag for the names of the objectives was only introduced a later stage. 
+                Thus, many objective data summaries are simoply named bnechmark_obj_av.csv. The algorithm for data calculation is however unchanged. 
         
         -------------------------------------------------------------------------------------
 
@@ -78,7 +79,7 @@ class Benchmark:
             name of the csv file in which the benchmark dataframe is saved
             Default: "df_benchmark.csv"
         objective: list
-            list indicating the column name for the objective (string) NOTE: Only a single objective is supported at the moment.
+            list indicating the column name for the objective (string)
         objective_mode: list
             list containing the mode of the objective (string): "max" or "min"      
         budget: int
@@ -100,7 +101,6 @@ class Benchmark:
             name of the file containing the dft-featurized reaction space for the vendi score calculation
             only has to be given if the substrate encoding is not dft-derived (e. g. Mordred or Rdkit featurization)
             Default: None
-
         """
         
         wdir = Path(directory)
@@ -115,9 +115,9 @@ class Benchmark:
         # Read labelled data.
         df_labelled = pd.read_csv(wdir.joinpath(filename_labelled),index_col=0,header=0, float_precision = "round_trip")
 
-        # Generate a copy of the DataFrame with labelled data and remove the objective data. NOTE: only implemented for single objective benchmarks.
+        # Generate a copy of the DataFrame with labelled data and remove the objective data.
         df_unlabelled = df_labelled.copy(deep=True)
-        df_unlabelled.drop(columns=[objectives[0]],inplace=True)
+        df_unlabelled.drop(columns=objectives,inplace=True)
 
         # Instantiate empty for the analyzed results.
         Vendi_names = [str(x) for x in Vendi_pruning_fractions]
@@ -219,9 +219,12 @@ class Benchmark:
 
                         # Update dataframe with results and save the objective values.
                         current_obj = []
-                        for idx in current_idx_samples:
-                            current_df.loc[idx,objectives[0]] = df_labelled.loc[idx,objectives[0]]  # NOTE: there is only one objective in the benchmarking dataset
-                            current_obj.append(df_labelled.loc[idx,objectives[0]])
+                        for objective in objectives:
+                            obj_list = []
+                            for idx in current_idx_samples:
+                                current_df.loc[idx,objective] = df_labelled.loc[idx,objective] 
+                                obj_list.append(df_labelled.loc[idx,objective])
+                            current_obj.append(obj_list)
 
                         # Save the dataframe for the next round of ScopeBO.
                         current_df.to_csv(csv_filename_pred, index=True, header=True)
@@ -233,7 +236,7 @@ class Benchmark:
                             current_df_dft.to_csv(wdir.joinpath(filename_vendi),index=True,header=True)
                             current_vendi_score = vendiScopeBO.get_vendi_score(objectives = objectives, 
                                                                             directory = directory, filename = filename_vendi)
-                            print("Vendi score calculated via additional file with dft.")                              
+                            print("Vendi score calculated via additional file with dft featurization.")                              
                         else:  # this is the standard case for a campaign using dft featurization
                             current_vendi_score = myScopeBO.get_vendi_score(objectives = objectives, directory = directory, filename = filename_prediction)
 
@@ -250,8 +253,8 @@ class Benchmark:
                         current_raw_results.append(current_idx_cut)
                         raw_results.append(current_raw_results)
 
-                        # Average the objective value for all samples in this round.
-                        current_obj_av = sum(current_obj)/len(current_obj)
+                        # Average the objective value for all samples in this round (separately for every objective)
+                        current_obj_av = [np.mean(sublist) for sublist in current_obj]
 
                         # Save the processed results for this round.
                         run_results.append([current_obj_av,current_vendi_score])
@@ -261,22 +264,36 @@ class Benchmark:
                     seeded_list_vendi.append([run_results[i][1] for i in range(len(run_results))])
                     
                     # Save raw results as a csv.
-                    df_results = pd.DataFrame(raw_results,columns=["obj_values","Vendi_score","eval_samples","cut_samples"])
+                    df_results = pd.DataFrame(raw_results,columns=[f"obj_values {objectives}","Vendi_score","eval_samples","cut_samples"])
                     csv_filename_results = wdir.joinpath(name_results+f"/raw_data/{budget}{acquisition_function_mode}_s{seed}_b{batch}_V{Vendi_pruning_fraction}.csv")
-
+                    if len(df_results.iloc[0,0]) == 1:  # flatten unnecessary list of lists for mono-objective runs
+                        for idx in df_results.index:
+                            df_results.loc[idx,f"obj_values {objectives}"] = str(df_results.loc[idx,f"obj_values {objectives}"][0])
                     df_results.to_csv(csv_filename_results,index=True,header=True)
 
                     print (f"Finished campaign {run_counter} of {total_runs}.")
                     run_counter+= 1
                 
-                # Calculate the averages and standard deviations across the differents seeds and save the results.
-                df_obj_av.loc[str(batch),str(Vendi_pruning_fraction)]  = str([sum(i) / len(i) for i in zip(*seeded_list_obj)])
+                # Calculate the averages and standard deviations across the different seeds and save the results.
+                obj_value = [[sum(matrix[i][j] for matrix in seeded_list_obj) / len(seeded_list_obj) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
+                if len(obj_value[0]) == 1:  # mono-objective
+                    df_obj_av.loc[str(batch),str(Vendi_pruning_fraction)] = str([value for round in obj_value for value in round])
+                else:  # multi-objective
+                    df_obj_av.loc[str(batch),str(Vendi_pruning_fraction)] = str(obj_value)
                 # Standard deviation can only be calculated if there are more than 2 values. Set to zero if there is only one.
                 if seeds > 1:
-                    df_obj_stdev.loc[str(batch),str(Vendi_pruning_fraction)]  = str([stdev(i) for i in zip(*seeded_list_obj)])
+                    obj_std = [[stdev([matrix[i][j] for matrix in seeded_list_obj]) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
+                    if len(obj_std[0]) == 1:  # mono-objective
+                        df_obj_stdev.loc[str(batch),str(Vendi_pruning_fraction)] = str([value for round in obj_std for value in round])
+                    else:  # multi-objective
+                        df_obj_stdev.loc[str(batch),str(Vendi_pruning_fraction)] = str(obj_std)
                     df_vendi_stdev.loc[str(batch),str(Vendi_pruning_fraction)]  = str([stdev(i) for i in zip(*seeded_list_vendi)])
                 else:
-                    df_obj_stdev.loc[str(batch),str(Vendi_pruning_fraction)]  = str([0 for i in zip(*seeded_list_obj)])
+                    obj_std = [[0 for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
+                    if len(obj_std[0]) == 1:  # mono-objective
+                        df_obj_stdev.loc[str(batch),str(Vendi_pruning_fraction)] = str([value for round in obj_std for value in round])
+                    else:  # multi-objective
+                        df_obj_stdev.loc[str(batch),str(Vendi_pruning_fraction)] = str(obj_std)
                     df_vendi_stdev.loc[str(batch),str(Vendi_pruning_fraction)]  = str([0 for i in zip(*seeded_list_vendi)])  
 
                 df_vendi_av.loc[str(batch),str(Vendi_pruning_fraction)]  = str([sum(i) / len(i) for i in zip(*seeded_list_vendi)])
@@ -284,8 +301,8 @@ class Benchmark:
 
 
         # Save the dataframes with the processed results as csv files.        
-        df_obj_av.to_csv(wdir.joinpath(name_results+"/benchmark_obj_av.csv"),index=True,header=True)
-        df_obj_stdev.to_csv(wdir.joinpath(name_results+"/benchmark_obj_stdev.csv"),index=True,header=True)
+        df_obj_av.to_csv(wdir.joinpath(name_results+f"/benchmark_obj{objectives}_av.csv"),index=True,header=True)
+        df_obj_stdev.to_csv(wdir.joinpath(name_results+f"/benchmark_obj{objectives}_stdev.csv"),index=True,header=True)
         df_vendi_av.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_av.csv"),index=True,header=True)
         df_vendi_stdev.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_stdev.csv"),index=True,header=True)
 
@@ -599,10 +616,11 @@ class Benchmark:
                     batch_sizes = None
                     if type(batch) is not str:  # case using a fixed batch size
                         batch_sizes = [batch]*len(av_obj_list)
-                        difference = budget - sum(batch_sizes)
-                        batch_sizes[-1] -= difference  # reduce the last batch if it was smaller due to budget constraints
                     else:  # case using different batch sizes in each round
                         batch_sizes = ast.literal_eval(batch)  # list with the batch sizes for each round
+                    if sum(batch_sizes) > budget:
+                        difference = budget - sum(batch_sizes)
+                        batch_sizes[-1] += difference  # reduce the last batch if it was smaller due to budget constraints
                     # reassign with the average obj value for the run
                     total_obj = [i*j for i,j in zip(batch_sizes,av_obj_list)]
                     df_obj.loc[batch,column] = sum(total_obj)/sum(batch_sizes)
@@ -1008,8 +1026,7 @@ class Benchmark:
             return print("No valid type provided for the normalization!")
         
 
-    @staticmethod
-    def results_for_run_conti(budget,type_results, name_results,scaling="normalization", scale_to_exp=True,directory="."):
+    def results_for_run_conti(self,budget,type_results, name_results,scaling="normalization", scale_to_exp=True,directory="."):
         """
         Adapted version of progress_plot() to get the progress of the different metrics for a continue_data_collection() run.
         NOTE: Only works if there is just one run (can have multiple seeds) in the name_results folder.
@@ -1087,8 +1104,8 @@ class Benchmark:
 
             # Scale the dataframes for the calculation of the scope score (using the experimentally determined bounds).
             if scaling.lower() == "normalization":
-                unscaled_data2 = unscaled_data2.applymap(lambda x: normalization(score=x,type="vendi"))
-                unscaled_data = unscaled_data.applymap(lambda x: normalization(score=x,type="obj"))
+                unscaled_data2 = unscaled_data2.applymap(lambda x: self.normalization(score=x,type="vendi"))
+                unscaled_data = unscaled_data.applymap(lambda x: self.normalization(score=x,type="obj"))
             else:
                 return print("No valid scaling metric provided.")
             unscaled_data = unscaled_data * unscaled_data2
