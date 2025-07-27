@@ -60,7 +60,7 @@ class ScopeBO:
         # NOTE: write function code. Maybe outsource to other file.
     
     @staticmethod
-    def create_reaction_space(reactants, directory='./', filename='reaction_space.csv'):
+    def create_reaction_space(reactants, feature_processing=True, directory='./', filename='reaction_space.csv'):
         """
         Creates a reaction space with all possible scope combinations.
         
@@ -71,8 +71,8 @@ class ScopeBO:
         
         Returns a dataframe df with all search space reaction combinations.
         """
-        df = create_reaction_space(components=reactants, directory=directory,
-                                   filename=filename)
+        df = create_reaction_space(reactants=reactants, feature_processing=feature_processing, 
+                                   directory=directory, filename=filename)
         return df
     
 
@@ -240,8 +240,8 @@ class ScopeBO:
     def run(self,
             objectives, objective_mode, objective_weights=None,
             directory='.', filename='reaction_space.csv',
-            batch=3, init_sampling_method='random', seed=42,
-            Vendi_pruning_fraction=12,  # NOTE: change the defaults once optimized.
+            batch=None, init_sampling_method='random', seed=42,
+            Vendi_pruning_fraction=None,
             pruning_metric = "vendi_sample",
             acquisition_function_mode='greedy',
             give_alternative_suggestions=True,
@@ -255,6 +255,7 @@ class ScopeBO:
         nested function model_run (defined below this function).
         
         Parameters
+        NOTE: go through docstring again.
         ----------
         objectives: list
             list of strings containing the name for each objective.
@@ -284,10 +285,9 @@ class ScopeBO:
             List containing the names of the columns to be included in the regression model. By default set to
             'all', which means the algorithm will automatically select all the columns that are not in
             the *objectives* list.
-        batch: int
-            Number of experiments that you want to run in parallel. For instance *batch = 5* means that you
-            will run 5 experiments in each EDBO+ run. You can change this number at any stage of the optimization,
-            so don't worry if you change  your mind after creating or initializing the reaction scope.
+        batch: int or None
+            Number of experiments that you want to run in parallel. 
+            Default is None (will use the value from optimization based on the number of samples).
         init_sampling_method: string:
             Method for selecting the first samples in the scope (in absence)  Choices are:
             - 'random' : Random seed (as implemented in Pandas).
@@ -295,9 +295,9 @@ class ScopeBO:
             - 'cvtsampling' : CVT sampling (default option) 
         seed: int
             Seed for the random initialization. Default = 42
-        Vendi_pruning_fraction: float
+        Vendi_pruning_fraction: float or None
             Pruning factor for the Vendi score evaluation.
-            Default is 10 (10% of the possible scope entries are pruned.).
+            Default is None (will use the value from optimization based on the number of samples).
         pruning_metric: str
             Metric used for the pruning.
             Options:
@@ -324,11 +324,11 @@ class ScopeBO:
   
 
         # 1. Safe checks.
-        self.objective_names = objectives
 
         # Check for correct Vendi_pruning_fraction input.
-        msg = "Vendi_pruning_fraction must be between 0 (no pruning) and 100 (all samples pruned). Please check your input."
-        assert (Vendi_pruning_fraction >= 0 and Vendi_pruning_fraction <= 100), msg
+        if Vendi_pruning_fraction is not None:
+            msg = "Vendi_pruning_fraction must be between 0 (no pruning) and 100 (all samples pruned) if provided. Please check your input."
+            assert (Vendi_pruning_fraction >= 0 and Vendi_pruning_fraction <= 100), msg
 
         # Check if objectives is a list (even for single objective optimization).
         if type(objectives) != list:
@@ -367,10 +367,30 @@ class ScopeBO:
 
         # Check whether new objective has been added
         # if there are, add them to the DataFrame and use PENDING as a dummy value.
-        for obj_i in self.objective_names:
+        for obj_i in objectives:
             if obj_i not in original_df.columns.values:
-                original_df[obj_i] = ['PENDING'] * len(original_df.values)
-        
+                original_df[obj_i] = 'PENDING'
+
+        # check if there are DataFrame entries with experimental results
+        idx_experimental_results = original_df[~original_df.isin(['PENDING']).any(axis=1)].index
+        # set the batch size and/or Vendi_pruning_fraction if the default is used
+        if (batch is None) or (Vendi_pruning_fraction is None):
+            batch_flag = True
+            if batch is not None:
+                batch_flag = False
+            Vendi_flag = True
+            if Vendi_pruning_fraction is not None:
+                Vendi_flag = False
+            # set up dict with the scope sizes after each round in optimized conditions and
+            # the corresponding Vendi pruning fraction
+            scope_list = {25:11,20:11,15:11,10:11,6:39,5:39,4:11}
+            # assign the values
+            for scope_size in scope_list.keys():
+                if scope_size > len(idx_experimental_results):
+                    if batch_flag:  # assign batch size if none is given
+                        batch = scope_size - len(idx_experimental_results)
+                    if Vendi_flag:  # assign Vendi pruning fraction if none is given
+                        Vendi_pruning_fraction = scope_list[scope_size]
 
         # If there was not an objective column in the data frame prior to
         # adding missing objective column, there are no experimental results
@@ -397,9 +417,6 @@ class ScopeBO:
                 draw_suggestions(df=original_df)
         
             return original_df
-
-        # check if there are DataFrame entries with experimental results
-        idx_experimental_results = (df[df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
 
         if not idx_experimental_results.tolist():
             
@@ -438,7 +455,6 @@ class ScopeBO:
         
         # Check that the search space still contains enough samples. Also reset priority of suggested samples that were not measured.
         if "priority" in df.columns.values:
-
             df_noexperiments = df[df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]
             idx_test = df_noexperiments[df_noexperiments['priority'] != -1].index
             
@@ -446,13 +462,18 @@ class ScopeBO:
             if len(idx_test) < batch:
                 if len(idx_test) == 0:
                     print("There no more samples left in the search space.")
+                    # The latest samples have priority 1 - change it to -2 to indicate that they have been run
+                    df_experiments = df[~df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]
+                    idx_train = df_experiments.index
+                    for idx in idx_train:
+                        df["priority"].at[idx] = -2
                     return original_df
                 else:
                     batch = len(idx_test)
                     if batch == 1:
                         print(f"These is only 1 sample left in the search space. The batch size is thus decreased to 1.")
                     else:
-                        print(f"There are only {batch} samples lef in the search space.")
+                        print(f"There are only {batch} samples left in the search space.")
                     print(f"The batch size is therefore decreased to {batch}.")
 
             # Reset the priority of all samples that have not been measured and that were not pruned.
