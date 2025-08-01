@@ -13,6 +13,7 @@ from rdkit import Chem
 from rdkit.Chem import Draw
 from rdkit.Chem import AllChem
 import seaborn as sns
+from adjustText import adjust_text
 
 from scripts.predictor  import ScopeBO
 
