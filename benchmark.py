@@ -70,8 +70,6 @@ class Benchmark:
                 In the case of multiple objectives, a separate file for each objective value as well as a file containing the combined objective values are generated.
 
                 Example name for a run with the objectives "yield" and "selectivity": "benchmark_obj[yield__selectivity]_av.csv" --> average objective value data
-                NOTE: The tag for the names of the objectives was only introduced a later stage. Thus, many objective data summaries are 
-                      simply named bnechmark_obj_av.csv. The code for data collection and analysis is however unchanged. 
         
         -------------------------------------------------------------------------------------
 
@@ -754,8 +752,8 @@ class Benchmark:
         elif type_results.lower() == "scope":    
             # Scaling the Vendi data for the scope score calculation (objective data was already normalized above)
             df_vendi = df_vendi.applymap(lambda x: self.standardization(score=x,distr_metrics=distr_mets["vendi"]))
-            # The scope score is here defined as vendi * objective.
-            df_heatmap = df_vendi * df_obj
+            # The scope score is here defined as 0.5*(vendi + objective).
+            df_heatmap = 0.5 * (df_vendi + df_obj)
         else:
             df_heatmap = df_obj
 
@@ -787,7 +785,7 @@ class Benchmark:
                 Options:
                     "vendi": Vendi score
                     "objective": average objective values
-                    "scope": scope score = vendi * objective
+                    "scope": scope score = 0.5 * (vendi + objective)
                     You can also provide the name of a specific objective for that run and then it will only analyze that one.
             name_results: str
                 Name of the subfolder in which the result csv files are saved.
@@ -896,7 +894,7 @@ class Benchmark:
         
         # Assign the data that is displayed in the plot
         if type_results.lower() == "scope":
-            unscaled_data = dict_unscaled_data["comb_obj"] * dict_unscaled_data["vendi"]
+            unscaled_data = 0.5 * (dict_unscaled_data["comb_obj"] + dict_unscaled_data["vendi"])
         elif type_results.lower() == "vendi":
             unscaled_data = dict_unscaled_data["vendi"]
         else:
@@ -959,9 +957,10 @@ class Benchmark:
                 Example: {"yield": 0.3, "ee": 0.7}
                 Default is None --> all objectives will be averaged with equal weights.
             display_cut_samples: Boolean
-                show the samples thta have been cut by the vendi scoring or not. Default = True.
+                show the samples that have been cut by the vendi scoring or not. Default = True.
                 If True, the samples in the plot will be colored by the round when they were selected.
-                If False, the samples will be displayed by 
+                If False, the samples will be displayed by their objective value 
+                (default is first listed objective - can be changed in variable obj_to_display)
             obj_to_display: dict or None
                 color the selected points by objective values if display_cut_samples is False.
                 Default is None (take the first listed objective and its extreme values as bounds)
@@ -1028,7 +1027,7 @@ class Benchmark:
 
         # Scaling the vendi data for the scope score calculation.
         vendi_scaled = self.standardization(score=vendi_score,distr_metrics=distr_mets["vendi"])
-        scope_score  =vendi_scaled * av_obj
+        scope_score  = 0.5 * (vendi_scaled + av_obj)
         print(f"Scope score: {scope_score:.3f}")
         if len(objectives) > 1:
               print(f"Average objective (scaled on [0,1]-scale): {av_obj:.3f}")
@@ -1075,8 +1074,8 @@ class Benchmark:
             colormap = 'crest'
             # Plot the non-selected points first
             plot = sns.scatterplot(
-                data=df_umap[df_umap['round'] == 0], x="UMAP1", y="UMAP2", s=20,
-                color='lavender', style="status", legend=False, alpha = 0.4,
+                data=df_umap[df_umap['round'] == 0], x="UMAP1", y="UMAP2", s=40,
+                color='silver', style="status", marker="o",legend=False, alpha = 0.6,
                 style_order=["suggested", "removed", "neutral"])
 
             # Plot the cut points
@@ -1112,7 +1111,7 @@ class Benchmark:
             cmap = sns.color_palette("vlag", as_cmap=True)
 
             # Plot non-numeric entries ("PENDING")
-            plt.scatter(df_pending["UMAP1"], df_pending["UMAP2"], color="lavender", s=20, alpha=0.4, label="PENDING")
+            plt.scatter(df_pending["UMAP1"], df_pending["UMAP2"], color="silver", s=20, alpha=0.6)
 
             # Plot numeric entries
             scatter_numeric = plt.scatter(df_selected["UMAP1"],df_selected["UMAP2"],c=df_selected[obj_plot_name],cmap=cmap,norm=norm,s=100,alpha=1,edgecolor='k',linewidth=1)
@@ -1415,7 +1414,7 @@ class Benchmark:
             # Scale the dataframes for the calculation of the scope score (using the experimentally determined bounds).
             unscaled_data2 = unscaled_data2.applymap(lambda x: self.standardization(score=x,distr_metrics=distr_mets["vendi"]))
             unscaled_data = unscaled_data.applymap(lambda x: self.standardization(score=x,distr_metrics=distr_mets["rate"]))
-            unscaled_data = unscaled_data * unscaled_data2
+            unscaled_data = 0.5 * (unscaled_data + unscaled_data2)
 
         if scale_to_exp:
             #  The data is currently shown per batch (which can be different for the different runs). Still needs to be "scaled" to the number of experiments. 
