@@ -995,9 +995,10 @@ class Benchmark:
         # Get the overall results for this run:
         vendi_score = df_data['Vendi_score'].iloc[-1]
         dict_obj_values = {}
+        df_data[f"obj_values {objectives}"] = df_data[f"obj_values {objectives}"].apply(ast.literal_eval)
+
         for i, obj in enumerate(objectives):
             # get a list with the objective values of each entry
-            df_data[f"obj_values ['{obj}']"] = df_data[f"obj_values ['{obj}']"].apply(ast.literal_eval)
             if len(objectives) > 1:
                 dict_obj_values[obj] = [value for round_list in [df_data.loc[round,f"obj_values {objectives}"][i] for round in df_data.index] for value in round_list]
             else:
@@ -1139,6 +1140,7 @@ class Benchmark:
     def show_scope(self,filename_data,name_results,by_round=True,rounds_to_display=None,common_core=None,directory='.',molsPerRow=6):
         """
         Depict the substrates that were selected for the scope.
+        NOTE: The function is only implemented for singe-objective scenarios.
         ------------------------------------------------------------------------------------------------
         Inputs:
             filename_data: str
