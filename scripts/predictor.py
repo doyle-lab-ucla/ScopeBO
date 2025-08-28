@@ -651,7 +651,7 @@ class ScopeBO:
             for batch_exp in range(batch):
 
                 # Prune the search space via Vendi scoring if requested (this time for each sample (after the fantasies) not each batch).
-                if ((pruning_metric.lower()  == 'vendi_sample') and (Vendi_pruning_fraction != 1)):
+                if ((pruning_metric.lower()  == 'vendi_sample') and (Vendi_pruning_fraction != 0)):
                     cumulative_test_x, cut_by_vendi, idx_test = vendi_pruning(
                         idx_test = idx_test,
                         idx_train = idx_train, 
