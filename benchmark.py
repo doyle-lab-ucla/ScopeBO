@@ -1072,7 +1072,8 @@ class Benchmark:
             figure.savefig(wdir.joinpath(filename_figure))
             
     
-    def show_scope(self,filename_data,name_results,by_round=True,rounds_to_display=None,common_core=None,directory='.',molsPerRow=6):
+    def show_scope(self,filename_data,name_results,by_round=True,rounds_to_display=None,common_core=None,
+                   give_data=False,suppress_figure=False,directory='.',molsPerRow=6):
         """
         Depict the substrates that were selected for the scope.
         NOTE: The function is only implemented for singe-objective scenarios.
@@ -1089,9 +1090,13 @@ class Benchmark:
                 The metrics will also only be calculate for the these rounds.
                 E. g.: rounds_to_display=5 --> first 4 rounds will be displayed
                 Default is None --> shows all rounds
-            common_core: str
+            common_core: str or None
                 string for the common core of the molecules to align them
                 Default: None
+            give_data: Boolean
+                return the sample dictionary if True (default: False)
+            suppress_figure: Boolean
+                option to suppress printing of the scope figure (default= False)
             directory: str
                 current directory. Default: "."
         """
@@ -1136,30 +1141,34 @@ class Benchmark:
 
             return mol_list
         
-        if by_round:
-            for round in df_data.index:
-                smiles_list = df_data.loc[round,"eval_samples"]
+        if not suppress_figure:
+            if by_round:
+                for round in df_data.index:
+                    smiles_list = df_data.loc[round,"eval_samples"]
+                    mol_list = generate_representation(smiles_list)
+                    # Draw the aligned molecules
+                    print(f"Molecules selected in round {round+1}:")
+                    depiction = Draw.MolsToGridImage(
+                        mol_list,
+                        molsPerRow=len(mol_list),
+                        subImgSize=(200, 200),
+                        legends = [str(sample_dict[smiles]) for smiles in smiles_list]
+                        )
+                    display(depiction)
+
+            else:
+                smiles_list = [smiles for round_list in [df_data.loc[round,"eval_samples"] for round in df_data.index] for smiles in round_list]
                 mol_list = generate_representation(smiles_list)
-                # Draw the aligned molecules
-                print(f"Molecules selected in round {round+1}:")
                 depiction = Draw.MolsToGridImage(
                     mol_list,
-                    molsPerRow=len(mol_list),
+                    molsPerRow=molsPerRow,
                     subImgSize=(200, 200),
                     legends = [str(sample_dict[smiles]) for smiles in smiles_list]
                     )
                 display(depiction)
-
-        else:
-            smiles_list = [smiles for round_list in [df_data.loc[round,"eval_samples"] for round in df_data.index] for smiles in round_list]
-            mol_list = generate_representation(smiles_list)
-            depiction = Draw.MolsToGridImage(
-                mol_list,
-                molsPerRow=molsPerRow,
-                subImgSize=(200, 200),
-                legends = [str(sample_dict[smiles]) for smiles in smiles_list]
-                )
-            display(depiction)
+        
+        if give_data:
+            return sample_dict
 
 
     @staticmethod
