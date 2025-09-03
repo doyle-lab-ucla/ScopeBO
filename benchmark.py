@@ -133,6 +133,7 @@ class Benchmark:
         dft_filename: None or str
             name of the file containing the dft-featurized reaction space for the vendi score calculation
             only has to be given if the substrate encoding is not dft-derived (e. g. Mordred or Rdkit featurization)
+            NOTE: only implemented for mono-objective cases
             Default: None
         """
         
@@ -301,7 +302,7 @@ class Benchmark:
                         current_df.to_csv(csv_filename_pred, index=True, header=True)
 
                         # Calculate the Vendi score for all points that were obseved so far.
-                        if vendiScopeBO:  # this is the scenario when a non-dft featurizatio is used in the campaign
+                        if vendiScopeBO:  # this is the scenario when a non-dft featurization is used in the campaign
                             for idx in current_idx_samples:
                                 current_df_dft.loc[idx,objectives[0]] = df_labelled.loc[idx,objectives[0]]
                             current_df_dft.to_csv(wdir.joinpath(filename_vendi),index=True,header=True)
@@ -974,7 +975,6 @@ class Benchmark:
         df_umap["status"] = "neutral"
         df_umap["round"] = 0
         obj_plot_name = None
-        obj_plot_data = None
         obj_plot_bounds = None
         if obj_to_display is None:
             obj_plot_name = objectives[0]
@@ -986,10 +986,11 @@ class Benchmark:
             obj_plot_bounds = obj_to_display[obj_plot_name]
 
         df_umap[obj_plot_name] = "PENDING"
+        df_umap.index = df_umap.index.astype(str)
         # Assign the samples to the df_umap dataframe.
         for round in list(df_data.index):            
             for sample in df_data.loc[round,"eval_samples"]:
-                sample = sample.encode().decode('unicode_escape')
+                sample = str(sample.encode().decode('unicode_escape'))
                 df_umap.loc[sample,"status"] = "suggested"
                 df_umap.loc[sample,"round"] = round+1
                 df_umap.loc[sample,obj_plot_name] = obj_plot.pop(0) # this works because samples and objective values are in the same order
