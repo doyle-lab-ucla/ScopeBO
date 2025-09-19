@@ -1242,7 +1242,7 @@ class Benchmark:
     
 
     @staticmethod
-    def objective_distribution(name_results, objective_bounds = (0,100), nr_bins = 10, directory = ".", print_figure = True):
+    def objective_distribution(name_results, objective_bounds = (0,100), nr_bins = 10, norm_axis = None, directory = ".", print_figure = True):
         """
         Compute and visualize the distribution of objective values across the different random seeds.
         NOTE: Currently only supports single-objective optimization.
@@ -1258,6 +1258,8 @@ class Benchmark:
         nr_bins : int
             Number of equally spaced bins to divide the objective range into.
             Default is 10.
+        norm_axis : int or None
+            Max value for the histogram count axis.
         directory : str
             Working directory. Default is current directory.
         print_figure : bool
@@ -1312,6 +1314,8 @@ class Benchmark:
             plt.bar(bin_centers, mean_counts, width=(bins[1]-bins[0]), yerr=std_counts, capsize=5, alpha=0.7, color='skyblue', edgecolor='black')
             plt.xlabel(f'{objectives[0].capitalize()} value')
             plt.ylabel('Average Count')
+            if norm_axis is not None:
+                plt.ylim(0, norm_axis)
             plt.title('Average Objective Distribution with Standard Deviation')
             plt.xticks(bins)
             plt.grid(axis='y')
