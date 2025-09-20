@@ -16,6 +16,7 @@ import seaborn as sns
 from adjustText import adjust_text
 
 from scripts.predictor  import ScopeBO
+from scripts.utils import calculate_vendi_score, obtain_full_covar_matrix
 
 
 class HiddenPrints:
@@ -38,6 +39,8 @@ class Benchmark:
             main functionality for running scopes
         continue_data_collection:
             continuing scope running by extending existing scopes
+        change_featurization:
+            recalculating Vendi scores in existing benchmark data with a different featurization
 
     Functions for data analysis:
         heatmap plot:
@@ -676,6 +679,97 @@ class Benchmark:
         df_vendi_stdev.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_stdev.csv"),index=True,header=True)
 
         print(f"Data collection finished! Results are saved in the subfolder {name_results}.")
+
+
+    @staticmethod
+    def change_featurization(name_feat, filename_labelled, name_results, directory):
+        """
+        Recalculate Vendi scores for scopes using an alternative featurization.
+        Generates a new folder with recalculated raw data files containing updated ``Vendi_score`` columns.
+
+        Parameters
+        ----------
+        name_feat : str
+            Name of the new featurization used in the Vendi score calculation.
+        filename_labelled : str
+            Path to the CSV file containing the labelled dataset with the new features.
+        name_results : str
+            Path to the folder containing the original results.
+        directory : str
+            Working directory.
+
+        Returns
+        -------
+        None
+            Saves recalculated raw data files with updated ``Vendi_score`` columns in a 
+            new folder named ``<name_results>_<name_feat>_feat/raw_data``.
+        """
+
+        # create a folder where the results can be saved
+        wdir = Path(directory)
+        results_path = wdir / name_results
+        raw_path = results_path / "raw_data"
+        feat_path = results_path.parent / f"{results_path.name}_{name_feat}_feat/raw_data"
+        feat_path.mkdir(parents=True, exist_ok=True)
+
+
+        # read in the featurization that will be used for the Vendi score calculation
+        df_labelled = pd.read_csv(wdir / filename_labelled,index_col=0,header=0)
+        # sort it by index
+        df_labelled.sort_index(inplace=True)
+
+        # find the objectives
+        objectives = Benchmark.find_objectives(name_results,directory)
+
+        # calculate the covariance matrix
+        cov_mat = obtain_full_covar_matrix(objectives=objectives,directory=directory,filename=filename_labelled)
+
+        print(f"Recalcuting the Vendi scores for the scopes in the folder '{name_results}'.")
+        # go through all the raw files in the original folder
+        for file in os.listdir(raw_path):
+
+            # make an unlabelled copy of the dataframe
+            df_Vendi = df_labelled.copy(deep=True)
+            for objective in objectives:
+                df_Vendi[objective] = "PENDING"
+
+            # read in the raw data file
+            df_raw = pd.read_csv(raw_path / file, index_col = 0, header = 0)
+
+            # convert the format of the evaluated samples from one string to a list of strings
+            df_raw["eval_samples"] = df_raw["eval_samples"].apply(lambda x: [y.strip("'") for y in x[1:-1].split(', ')])
+
+            # reset the Vendi scores
+            df_raw["Vendi_score"] = np.nan
+
+            Vendi_scores = []
+            # loop through the rounds of the run
+            for run_round in df_raw.index:
+
+                    # get the evaluated samples
+                    samples = df_raw.loc[run_round,"eval_samples"]
+
+                    # record the evaluated samples in the df of the new featurization
+                    for sample in samples:
+                        for objective in objectives:
+                            df_Vendi.loc[sample,objective] = df_labelled.loc[sample,objective]
+
+                    # sort to assert that df_Vendi has the required order as the cov_mat
+                    df_Vendi.sort_index(inplace=True)
+
+                    # calculate the Vendi score and save it
+                    idx_target = (df_Vendi[~df_Vendi.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
+                    idx_num = [df_Vendi.index.get_loc(idx) for idx in idx_target]
+                    current_Vendi_score = calculate_vendi_score(idx_num=idx_num,covariance_matrix=cov_mat)
+                    Vendi_scores.append(current_Vendi_score)
+        
+            # overwrite the Vendi scores in the df
+            df_raw["Vendi_score"] = Vendi_scores
+
+            # save it in the new folder
+            df_raw.to_csv(feat_path / file, index=True,header=True)
+
+            print(f"Recalculated the Vendi scores in the file {file} (using {name_feat} featurization).")
 
 
     def heatmap_plot(self,type_results, name_results, budget, scope_method = "product",objective_mode = {"all_obj":"max"}, objective_weights=None,
@@ -1351,7 +1445,8 @@ class Benchmark:
             return (score-vendi_bounds[1])/(vendi_bounds[0]-vendi_bounds[1])
         else:
             return print("No valid type provided for the normalization!")
-        
+
+
     @staticmethod
     def standardization(score,distr_metrics):
         """
@@ -1503,7 +1598,7 @@ class Benchmark:
         Returns:
             list of the objectives that were used in this run
         """
-        wdir = Path(".")
+        wdir = Path(directory)
         # Get a list of the raw files of the run
         raw_path = wdir.joinpath(folder_name+"/raw_data/")
         raw_files = os.listdir(raw_path)
@@ -1683,7 +1778,3 @@ class Benchmark:
             dfs_scaled[key] = dfs_scaled[key][sorted(dfs_scaled[key].columns)]
 
         return dfs_scaled, type_results
-
-
-
-    
