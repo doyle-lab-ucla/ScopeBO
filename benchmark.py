@@ -1,6 +1,7 @@
 import ast
 import os
 from pathlib import Path
+import re
 from statistics import stdev
 import sys
 
@@ -400,289 +401,8 @@ class Benchmark:
         print(f"Data collection finished! Results are saved in the subfolder {name_results}.")
 
 
-    def continue_data_collection(self, filename_labelled, objectives, objective_mode, copy_rounds, 
-                                 remaining_budget, batches, 
-                                 Vendi_pruning_fractions, seeds, name_results, name_prior_results, 
-                                 init_sampling_method, sample_threshold = None, enforce_dissimilarity=False, 
-                                 pruning_metric = "vendi", acquisition_function_mode = 'balanced', dft_filename = None, 
-                                 filename_prediction = "df_benchmark.csv", directory='.'):
-        """
-        Takes the first n rounds from a different run and continues them with the indicated settings. Otherwise, the same as collect_data().
-        See the docstring of collect_data() for full details on the generated reports and most variables.
-        NOTE: The function only works if the folder name_prior_results only contains one run (with different seeds)!
-        NOTE: The function also only works for mono-objective runs at the moment.
-        -------------------------------------------------------------------------------------
-        Additional parameters compared to collect_data():
-
-        copy_rounds: int
-            number of rounds to take from the previous run (meaning all rounds until the indicated one)
-        remaining_budget: int
-            number of experiments to be added in this run
-        name_results: string
-            name for saving the generated results
-        name_prior_results: str
-            name of the folder from which results are read in
-        """
-        
-        wdir = Path(directory)
-        # Create the results folder and the folder for raw results.
-        if not os.path.exists(wdir.joinpath(name_results)):
-            # Create the folder
-            os.makedirs(wdir.joinpath(name_results))
-        if not os.path.exists(wdir.joinpath(name_results+"/raw_data")):
-            # Create the folder
-            os.makedirs(wdir.joinpath(name_results+"/raw_data"))
-
-        # Read labelled data.
-        df_labelled = pd.read_csv(wdir.joinpath(filename_labelled),index_col=0,header=0, float_precision = "round_trip")
-
-        # Generate a copy of the DataFrame with labelled data and remove the objective data. NOTE: only implemented for single objective benchmarks.
-        df_unlabelled = df_labelled.copy(deep=True)
-        df_unlabelled.drop(columns=[objectives[0]],inplace=True)
-
-        # Instantiate empty df for the analyzed results.
-        Vendi_names = []
-        for Vpf in Vendi_pruning_fractions:
-            if type(Vpf) is list:
-                rounded_Vpf = [round(el,1) if type(el) is float else el for el in Vpf]
-                Vendi_names.append("-".join(map(str,rounded_Vpf)))
-            else:
-                Vendi_names.append(str(Vpf))
-        batch_names = []
-        for batch in batches:
-            if type(batch) is list:
-                batch_names.append("-".join(map(str,batch)))
-            else:
-                batch_names.append(str(batch))
-        df_obj_av = pd.DataFrame(None,batch_names,Vendi_names)
-        df_obj_stdev = pd.DataFrame(None,batch_names,Vendi_names)
-        df_vendi_av = pd.DataFrame(None,batch_names,Vendi_names)
-        df_vendi_stdev = pd.DataFrame(None,batch_names,Vendi_names)
-
-        # Instantiate a ScopeBO object
-        myScopeBO = ScopeBO()
-
-        # Set the name for the file used in the benchmarking runs.
-        csv_filename_pred = wdir.joinpath(filename_prediction)
-
-        # In case of non-DFT featurization, set up some other things to get a DFT-featurization-based vendi score.
-        vendiScopeBO = None
-        df_dft = None
-        filename_vendi = None
-        current_df_dft = None
-        if dft_filename:
-            filename_vendi = filename_prediction.replace(".csv","_vendi.csv")
-            df_dft = pd.read_csv(wdir.joinpath(dft_filename),index_col=0,header=0, float_precision = "round_trip")
-            df_dft[objectives[0]] = "PENDING"
-            vendiScopeBO = ScopeBO()
-            
-        # Run all the requested parameter settings.
-        run_counter = 1  # variable for feedback during run
-        total_runs = len(batches) * len(Vendi_pruning_fractions) * seeds  # same
-        for batch in batches: 
-            for Vendi_pruning_fraction in Vendi_pruning_fractions:
-                
-                seeded_list_obj = []
-                seeded_list_vendi = []
-
-                for seed in range(seeds): 
-
-                    current_df = df_unlabelled.copy(deep=True)
-
-                    # read in the prior results with the correct seed
-                    prior_run_name = None
-                    for filename in os.listdir(wdir.joinpath(name_prior_results+"/raw_data/")):
-                        if f"s{seed}" in filename:  # check for the file with the correct seed by using naming convention
-                            prior_run_name = filename
-                    df_prior_data = pd.read_csv(wdir.joinpath(name_prior_results+"/raw_data/"+prior_run_name),index_col=0,header=0, float_precision = "round_trip")
-                                                            
-                    # process this df
-                    df_prior_data["eval_samples"] = df_prior_data["eval_samples"].apply(lambda x: [y.strip("'") for y in x[1:-1].split(', ')])
-                    df_prior_data["cut_samples"] = df_prior_data["cut_samples"].apply(lambda x: [y.strip("'") for y in x[1:-1].split(', ')])
-
-                    # collect the selected samples for all requested rounds
-                    prior_selected = [smiles.encode().decode('unicode_escape') for round_list in [df_prior_data.loc[round,"eval_samples"] for round in df_prior_data.index[:copy_rounds]] for smiles in round_list]
-                    prior_budget = len(prior_selected)
-
-                    # same for the pruned samples
-                    prior_cut = [smiles.encode().decode('unicode_escape') for round_list in [df_prior_data.loc[round,"cut_samples"] for round in df_prior_data.index[:copy_rounds]] for smiles in round_list]
-
-                    # typically there is no pruning in the first round of experiments (initiation), resulting in the list containing an empty element - delete that element
-                    if "" in prior_cut:
-                        prior_cut.remove("")
-
-                    # get the previously measured objective values
-                    prior_obj = list(df_labelled.loc[df_labelled.index.isin(prior_selected),objectives[0]])
-
-                    # assign the priorities in the dataframe
-                    current_df["priority"] = 0
-                    current_df.loc[prior_selected,"priority"] = -2
-                    current_df.loc[prior_cut,"priority"] = -1
-
-                    # Set up lists to hold raw results and average results for this run.
-                    raw_results = []
-                    run_results = []
-
-                    # Save the prior results in a list and append it to the overall results list.
-                    current_raw_results = []
-                    current_raw_results.append(prior_obj)
-                    current_raw_results.append(df_prior_data.loc[copy_rounds-1,"Vendi_score"])
-                    current_raw_results.append(prior_selected)
-                    current_raw_results.append(prior_cut)
-                    raw_results.append(current_raw_results)
-                    prior_obj_av = sum(prior_obj)/len(prior_obj)
-
-
-                    # Save the processed results for this round.
-                    run_results.append([prior_obj_av,df_prior_data.loc[copy_rounds-1,"Vendi_score"]])
-
-                    # assign the objective values in the dataframe
-                    current_df[objectives[0]] = "PENDING"
-                    for idx in prior_selected:
-                        current_df.loc[idx,objectives[0]] = df_labelled.loc[idx,objectives[0]]
-
-                    current_df.to_csv(csv_filename_pred, index=True, header=True)
-                    if df_dft is not None:
-                        current_df_dft = df_dft.copy(deep=True)  # reset the dft-feautrized df for the vendi calculation
-                    
-                    # Determine the number of rounds of experiments for the given batch size.
-                    rounds = 0
-                    if type(batch) is list:
-                        rounds = len(batch)
-                    else:
-                        if remaining_budget % batch != 0:
-                            rounds = int(remaining_budget/batch)+1 # extra round with reduced batch size for last run (will be reduced below)
-                        
-                        else:
-                            rounds = int(remaining_budget/batch)
-
-                    # Run ScopeBO for these settings.
-                    for current_round in range(rounds):
-                            
-                        # check if the batch sie is dynamic (meaning different batch sizes for each rounds)
-                        current_batch = None
-                        if type(batch) is list:
-                            current_batch = batch[current_round]
-                        else:
-                            current_batch = batch
-                            # Check if this will be a run with reduced batch size (due to the set budget).
-                            if current_round+1 == rounds and remaining_budget % batch != 0:
-                                current_batch = remaining_budget % batch
-
-                        # Check if the Vendi_pruning_fraction is dynamic (meaning different fractions for each round)
-                        this_Vendi_pruning_fraction = None
-                        if type(Vendi_pruning_fraction) is list:
-                            this_Vendi_pruning_fraction = Vendi_pruning_fraction[current_round]
-                        else:
-                            this_Vendi_pruning_fraction = Vendi_pruning_fraction
-
-                        print(f"Now running Batch size: {batch}, Vendi_pruning_fraction: {this_Vendi_pruning_fraction}, Seed: {seed}, Round: {current_round}, current batch: {current_batch}")
-                        with HiddenPrints():
-                            current_df = myScopeBO.run(
-                                objectives = objectives,
-                                objective_mode= objective_mode,
-                                filename = filename_prediction,
-                                batch = current_batch,
-                                init_sampling_method = init_sampling_method,
-                                seed = seed,
-                                Vendi_pruning_fraction = this_Vendi_pruning_fraction,
-                                pruning_metric = pruning_metric,
-                                acquisition_function_mode = acquisition_function_mode,
-                                give_alternative_suggestions = False,
-                                show_suggestions=False,
-                                sample_threshold=sample_threshold,
-                                enforce_dissimilarity=enforce_dissimilarity
-                            )
-                        
-                        # reset the list to hold the raw results for this round
-                        current_raw_results = []
-
-                        # Save indices of samples.
-                        current_idx_samples = list(current_df[current_df["priority"]  == 1].index)
-
-                        # Update dataframe with results and save the objective values.
-                        current_obj = []
-                        for idx in current_idx_samples:
-                            current_df.loc[idx,objectives[0]] = df_labelled.loc[idx,objectives[0]]  # NOTE: there is only one objective in the benchmarking dataset
-                            current_obj.append(df_labelled.loc[idx,objectives[0]])
-
-                        # Save the dataframe for the next round of ScopeBO.
-                        current_df.to_csv(csv_filename_pred, index=True, header=True)
-
-                        # Calculate the Vendi score for all points that were observed so far.
-                        if vendiScopeBO:  # this is the scenario when a non-dft featurizatio is used in the campaign
-                            for idx in current_idx_samples:
-                                current_df_dft.loc[idx,objectives[0]] = df_labelled.loc[idx,objectives[0]]
-                            current_df_dft.to_csv(wdir.joinpath(filename_vendi),index=True,header=True)
-                            current_vendi_score = vendiScopeBO.get_vendi_score(objectives = objectives, 
-                                                                            directory = directory, filename = filename_vendi)
-                            print("Vendi score calculated via additional file with dft.")                              
-                        else:  # this is the standard case for a campaign using dft featurization
-                            current_vendi_score = myScopeBO.get_vendi_score(objectives = objectives, directory = directory, filename = filename_prediction)
-
-                        # Get the newly pruned samples by looking up all pruned samples and removing the ones that were already pruned.
-                        current_idx_cut = list(current_df[current_df["priority"]  == -1].index)
-                        for i in range(current_round+1):  # loop through the previously saved batches. (plus one because results from prior run have been saved before round 0 of the run)
-                            for j in raw_results[i][3]:  # cut samples are saved as the 4th entry in each current_results list
-                                current_idx_cut.remove(j)                      
-
-                        # Save results for this round in a list and append it to the overall results list.
-                        current_raw_results.append(current_obj)
-                        current_raw_results.append(current_vendi_score)
-                        current_raw_results.append(current_idx_samples)
-                        current_raw_results.append(current_idx_cut)
-                        raw_results.append(current_raw_results)
-
-                        # Average the objective value for all samples in this round.
-                        current_obj_av = sum(current_obj)/len(current_obj)
-
-                        # Save the processed results for this round.
-                        run_results.append([current_obj_av,current_vendi_score])
-
-                    # Save the processed results for this run.
-                    seeded_list_obj.append([run_results[i][0] for i in range(len(run_results))])
-                    seeded_list_vendi.append([run_results[i][1] for i in range(len(run_results))])
-                    
-                    # Save raw results as a csv.
-                    df_results = pd.DataFrame(raw_results,columns=[f"obj_values {objectives}","Vendi_score","eval_samples","cut_samples"])
-                    csv_filename_results = wdir.joinpath(name_results+f"/raw_data/{prior_budget}+{remaining_budget}{acquisition_function_mode}_b{batch_names[batches.index(batch)]}_V{Vendi_names[Vendi_pruning_fractions.index(Vpf)]}_s{seed}.csv")
-                    if len(df_results.iloc[0,0]) == 1:  # flatten unnecessary list of lists for mono-objective runs
-                        for idx in df_results.index:
-                            df_results.loc[idx,f"obj_values {objectives}"] = str(df_results.loc[idx,f"obj_values {objectives}"][0])
-                    df_results.to_csv(csv_filename_results,index=True,header=True)
-
-                    print (f"Finished campaign {run_counter} of {total_runs}.")
-                    run_counter+= 1
-                
-                # Calculate the averages and standard deviations across the different seeds and save the results.
-                obj_value = [[sum(matrix[i][j] for matrix in seeded_list_obj) / len(seeded_list_obj) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
-                df_obj_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_value for value in this_round])
-               
-                # Standard deviation can only be calculated if there are at least 2 values. Set to zero if there is only one.
-                if seeds > 1:
-                    obj_std = [[stdev([matrix[i][j] for matrix in seeded_list_obj]) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
-                    df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_std for value in this_round])
-                    df_vendi_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([stdev(i) for i in zip(*seeded_list_vendi)])
-                else:
-                    obj_std = [[0 for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
-                    df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_std for value in this_round])
-                    df_vendi_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([0 for i in zip(*seeded_list_vendi)])  
-
-                df_vendi_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([sum(i) / len(i) for i in zip(*seeded_list_vendi)])
-
-
-
-        # Save the dataframes with the processed results as csv files.        
-        df_obj_av.to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{'__'.join(objectives)}]_av.csv"),index=True,header=True)
-        df_obj_stdev.to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{'__'.join(objectives)}]_stdev.csv"),index=True,header=True)
-        df_vendi_av.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_av.csv"),index=True,header=True)
-        df_vendi_stdev.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_stdev.csv"),index=True,header=True)
-
-        print(f"Data collection finished! Results are saved in the subfolder {name_results}.")
-
-
     @staticmethod
-    def change_featurization(name_feat, filename_labelled, name_results, directory):
+    def change_featurization(name_feat, filename_labelled, name_results, cov_mat = None, directory = "."):
         """
         Recalculate Vendi scores for scopes using an alternative featurization.
         Generates a new folder with recalculated raw data files containing updated ``Vendi_score`` columns.
@@ -721,8 +441,9 @@ class Benchmark:
         # find the objectives
         objectives = Benchmark.find_objectives(name_results,directory)
 
-        # calculate the covariance matrix
-        cov_mat = obtain_full_covar_matrix(objectives=objectives,directory=directory,filename=filename_labelled)
+        # calculate the covariance matrix if none was provided
+        if cov_mat is None:
+            cov_mat = obtain_full_covar_matrix(objectives=objectives,directory=directory,filename=filename_labelled)
 
         print(f"Recalcuting the Vendi scores for the scopes in the folder '{name_results}'.")
         # go through all the raw files in the original folder
@@ -817,8 +538,8 @@ class Benchmark:
         
         
         # Get the overview for the requested data
-        dfs_scaled, type_results = self.get_metric_overview(wdir,budget,type_results, name_results, scope_method, objective_mode,
-                    objective_weights, bounds,directory)
+        dfs_scaled,_ = self.get_metric_overview(bounds, budget, name_results, type_results, scope_method, objective_mode,
+                        objective_weights, directory)
         
         means = dfs_scaled["means"]
         
@@ -826,6 +547,7 @@ class Benchmark:
         # transform to grid with batch sizes as indices and pruning amounds as columns
         batch_sizes = list(set([int(col.split("_")[0][1:]) for col in means.columns]))
         pruning_amounts = list(set([int(col.split("_")[1][1:]) for col in means.columns]))
+        
         df_heatmap = pd.DataFrame(np.nan,index=batch_sizes,columns=pruning_amounts)
         df_heatmap.index = sorted(df_heatmap.index)
         df_heatmap.columns = sorted(df_heatmap.columns)
@@ -850,7 +572,7 @@ class Benchmark:
 
     def progress_plot(self,budget,type_results, name_results, scope_method= "product", objective_mode = {"all_obj":"max"},
                         objective_weights=None, bounds = {"rate":(2.349,1.035),"vendi":(6.366,1.941)},filename_figure = None, 
-                        directory=".",show_plot=True,show_stdev=True):
+                        directory=".",show_plot=True,show_stats=None):
             """
             Generates a result(number of experimenst) y(x)-plot for the requested results.
             Options for displayed results: scope score ("scope"), vendi score ("vendi"), weighted objectives ("objective", normalized if multiple objectives),
@@ -889,21 +611,26 @@ class Benchmark:
                     current directory. Default: '.'
                 show_plot: Boolean
                     Option to display the generated line plot (default is True).
-                show_stdev: Boolean
-                    Option to display the standard deviation of the displayed metric.
+                show_stats: str or None
+                    Option to display a statistic to the metric.
+                    Options:
+                        "stdev": Standard deviation.
+                        "min-max": Max and Min values.
+                    Default is None.
             """
 
             wdir = Path(directory)
 
             # Get the overview for the requested data
-            dfs_scaled, type_results = self.get_metric_overview(wdir,budget,type_results, name_results, scope_method, objective_mode,
-                        objective_weights, bounds,directory)
+            dfs_scaled,_ = self.get_metric_overview(bounds, budget, name_results, type_results, scope_method, objective_mode,
+                            objective_weights, directory)
 
             # Plot and save the figure if requested.
             if show_plot:
                 means = dfs_scaled["means"]
-                dfs_scaled["means"].columns
                 stds = dfs_scaled["stdev"]
+                maxs = dfs_scaled["max"]
+                mins = dfs_scaled["min"]
 
                 fig, ax = plt.subplots(figsize=(6,6))
                 
@@ -911,28 +638,31 @@ class Benchmark:
                     x    = means.index.values
                     mean = means[col].values
                     std  = stds[col].values
+                    maxval = maxs[col].values
+                    minval = mins[col].values
 
                     # mask nan values that would hinder printing
-                    mask = ~np.isnan(mean) & ~np.isnan(std)
-                    x, mean, std = x[mask], mean[mask], std[mask]
+                    mask = ~np.isnan(mean) & ~np.isnan(std) & ~np.isnan(maxval) & ~np.isnan(minval)
+                    x, mean, std, maxval, minval = x[mask], mean[mask], std[mask], maxval[mask], minval[mask]
 
                     color = ax._get_lines.get_next_color()
                     ax.plot(x, mean, label=col, color=color)
-                    # if show_stdev.lower()=="area":
-                    #     ax.fill_between(x, mean - std, mean + std, alpha=0.1, color=color)
-                    # elif show_stdev.lower()=="lines":
-                    #     ax.plot(x, mean + std, linestyle="-", color=color, alpha=0.2)
-                    #     ax.plot(x, mean - std, linestyle="-", color=color, alpha=0.2)
-                    if show_stdev:
+                    if show_stats == "stdev":
                         ax.fill_between(x, mean - std, mean + std, alpha=0.1, color=color)
                         ax.plot(x, mean + std, linestyle="--", color=color, alpha=0.3)
                         ax.plot(x, mean - std, linestyle="--", color=color, alpha=0.3)
-
-                ax.set_xlabel("Scope size")
+                    elif show_stats == "min-max":
+                        ax.fill_between(x, minval, maxval, alpha=0.1, color=color)
+                        ax.plot(x, maxval, linestyle="--", color=color, alpha=0.3)
+                        ax.plot(x, minval, linestyle="--", color=color, alpha=0.3)
+                
+                ax.set_xlabel("Scope size", fontsize=16)
                 if type_results == "comb_obj":
                     type_results = "Combined objective"
-                ax.set_ylabel(f"{type_results} score")
-                ax.legend(title="Columns")
+                ax.set_ylabel(f"{type_results} score",fontsize = 16)
+                ax.tick_params(labelsize=14)
+                ax.legend(title="Columns",fontsize=14,title_fontsize=14)
+                plt.tight_layout()
                 plt.show()
 
                 # save the figure if requested
@@ -940,7 +670,7 @@ class Benchmark:
                     figure = fig.get_figure()
                     figure.savefig(wdir.joinpath(filename_figure))
 
-            return dfs_scaled["means"], dfs_scaled["stdev"]  # return the data
+            return dfs_scaled  # return the data
 
 
     def track_samples(self,filename_umap, filename_data,name_results,scope_method="product", 
@@ -1042,7 +772,7 @@ class Benchmark:
         dict_obj_scaled = {}
         dict_obj_av = {}
         for obj in dict_obj_values:
-            dict_obj_scaled[obj] = [self.normalization(score=value,type="obj",obj_bounds=bounds[obj]) for value in dict_obj_values[obj]]
+            dict_obj_scaled[obj] = [self.normalization(score=value, bounds=bounds[obj]) for value in dict_obj_values[obj]]
             # check if the objective was a minimization task and treat appropriately if so
             if obj in min_obj:
                 dict_obj_scaled[obj] = [1 - value for value in dict_obj_scaled[obj]]
@@ -1059,7 +789,7 @@ class Benchmark:
 
 
         # Scaling the vendi data for the scope score calculation.
-        vendi_scaled = self.normalization(score=vendi_score,type="vendi")
+        vendi_scaled = self.normalization(score=vendi_score, bounds=bounds["vendi"])
         scope_score  = self.calculate_scope_score(av_obj,vendi_scaled,scope_method)
         print(f"Scope score: {scope_score:.3f}")
         if len(objectives) > 1:
@@ -1418,33 +1148,46 @@ class Benchmark:
         return df_counts
 
 
+    # @staticmethod
+    # def normalization(score,results_type="obj",vendi_bounds=(6.322194,1.975986),obj_bounds=(2.295611,1.176657)):
+    #     """
+    #     Helper function:
+    #     Function to normalize Vendi scores and average objectives.
+    #     Input:
+    #         score: float or int
+    #             result to be processed
+    #         type: str
+    #             type of results to be processed.
+    #             Options:
+    #                 "vendi": Vendi scores
+    #                 "obj": average objectives (Default)
+    #         vendi_bounds: tuple
+    #             upper and lower bounds (in that order) of the vendi scores for the normalization
+    #             Default values are for the ArI dataset (without processing).
+    #         obj_bounds: tuple
+    #             upper and lower bounds (in that order) of the average objectives for the normalization
+    #             Default values are for the ArI dataset.
+    #     """
+    #     if "obj" in results_type.lower():
+    #         return (score-obj_bounds[1])/(obj_bounds[0]-obj_bounds[1])
+    #     elif results_type.lower() == "vendi":
+    #         return (score-vendi_bounds[1])/(vendi_bounds[0]-vendi_bounds[1])
+    #     else:
+    #         return print("No valid type provided for the normalization!")
+
     @staticmethod
-    def normalization(score,type="obj",vendi_bounds=(6.366,1941),obj_bounds=(2.349,1.035)):
+    def normalization(score,bounds):
         """
         Helper function:
         Function to normalize Vendi scores and average objectives.
         Input:
             score: float or int
                 result to be processed
-            type: str
-                type of results to be processed.
-                Options:
-                    "vendi": Vendi scores
-                    "obj": average objectives (Default)
-            vendi_bounds: tuple
-                upper and lower bounds (in that order) of the vendi scores for the normalization
-                Default values are for the ArI dataset.
-            obj_bounds: tuple
-                upper and lower bounds (in that order) of the average objectives for the normalization
-                Default values are for the ArI dataset.
+            bounds: tuple
+                upper and lower bounds (in that order) of the scores for the normalization
         """
-        
-        if "obj" in type.lower():
-            return (score-obj_bounds[1])/(obj_bounds[0]-obj_bounds[1])
-        elif type.lower() == "vendi":
-            return (score-vendi_bounds[1])/(vendi_bounds[0]-vendi_bounds[1])
-        else:
-            return print("No valid type provided for the normalization!")
+        return (score-bounds[1])/(bounds[0]-bounds[1])
+
 
 
     @staticmethod
@@ -1483,108 +1226,7 @@ class Benchmark:
             scope_score = np.sqrt(prod)
 
         return scope_score
-          
-
-    def results_for_run_conti(self,budget,type_results, name_results, scope_method="product",scale_to_exp=True, directory="."):
-        """
-        Adapted version of progress_plot() to get the progress of the different metrics for a continue_data_collection() run.
-        NOTE: Only works if there is just one run (can have multiple seeds) in the name_results folder.
-        -------------------------
-        budget: int
-            scope size
-        type_results: str
-            type of results to be displayed
-            options: "scope" (scope score), "vendi" (Vendi score), "objective" (objective score)
-        name_results: str
-            folder with results to be analyzed
-        scope_method: str
-            method to calculate the scope score ("average","product" (Default),"geometric_mean")
-        scale_to_exp: Boolean
-            option to display the results by round (False) or number of experiments (True; Default)
-        directory: str
-            working directory. Default is current directory (".")
-        """
-
-        wdir = Path(directory)
-            
-        # Read in the required data.
-        if (("obj" in type_results.lower()) or ("scope" in type_results.lower())):
-            data = pd.read_csv(wdir.joinpath(name_results+"/benchmark_obj[rate]_av.csv"),index_col=0,header=0)
-            data = data.applymap(lambda x: ast.literal_eval(x))
-            if "scope" in type_results.lower():
-                data2 = pd.read_csv(wdir.joinpath(name_results+"/benchmark_vendi_av.csv"),index_col=0,header=0, float_precision = "round_trip")
-                data2 = data2.applymap(lambda x: ast.literal_eval(x))
-        if "vendi" in type_results.lower():
-            data = pd.read_csv(wdir.joinpath(name_results+"/benchmark_vendi_av.csv"),index_col=0,header=0, float_precision = "round_trip")
-            data = data.applymap(lambda x: ast.literal_eval(x))
-        
-        index_list = []
-        results_list = []
-        results_list2 = []
-        batch_sizes_list = []
-
-        # Go through the results and analyze them.
-        for batch in data.index:
-            for Vendi_pruning_fraction in data.columns:
-                index_string = "b"+str(batch)+"_V"+str(Vendi_pruning_fraction)
-                index_list.append(index_string)
-
-                # define the batch sizes
-                batch_sizes = [batch]*len(data.loc[batch,Vendi_pruning_fraction])
-                # redefine the first batch (these are the prior samples) based on the name of the individual runs
-                batch_sizes[0] = int(os.listdir(wdir.joinpath(name_results+"/raw_data/"))[0].split("+")[0])
-                difference = budget - sum(batch_sizes)
-                batch_sizes[-1] += difference  # reduce the last batch if it was smaller due to budget constraints
-                batch_sizes_list.append(batch_sizes)
-
-                processed_data = []
-                processed_data2 = []
-
-                if (("obj" in type_results.lower()) or ("scope" in type_results.lower())):
-                    unprocessed_obj = data.loc[batch,Vendi_pruning_fraction]  # these are the average yields per round, not for all experiments until this round!
-                    processed_data = []
-                    processed_data2 = []
-                    total_obj = [i*j for i,j in zip(batch_sizes,unprocessed_obj)]  # [batch size]*[average obj] for each round
-                    for round in range(len(unprocessed_obj)):
-                        processed_result = sum(total_obj[:(round+1)]) / sum(batch_sizes[:(round+1)])
-                        processed_data.append(processed_result)
-
-                    if "scope" in type_results.lower():
-                        processed_data2 = data2.loc[batch,Vendi_pruning_fraction]
-
-                elif "vendi" in type_results.lower():
-                    processed_data = data.loc[batch,Vendi_pruning_fraction]
-                results_list.append(processed_data)
-                results_list2.append(processed_data2)
-
-        unscaled_data = pd.DataFrame(results_list,index_list).T
-        unscaled_data2 = None
-
-        if "scope" in type_results.lower():
-            unscaled_data2 = pd.DataFrame(results_list2,index_list).T
-
-            # Scale the dataframes for the calculation of the scope score (using the experimentally determined bounds).
-            unscaled_data2 = unscaled_data2.applymap(lambda x: self.normalization(score=x,type="vendi"))
-            unscaled_data = unscaled_data.applymap(lambda x: self.normalization(score=x,type="obj"))
-            unscaled_data = self.calculate_scope_score(unscaled_data,unscaled_data2,scope_method)
-
-        if scale_to_exp:
-            #  The data is currently shown per batch (which can be different for the different runs). Still needs to be "scaled" to the number of experiments. 
-            scaled_data = pd.DataFrame(np.nan,[x+1 for x in range(budget)],unscaled_data.columns)  # create empty dataframe with the right shape
-            for column_nr in range(len(unscaled_data.columns)):
-                batch_sizes = batch_sizes_list[column_nr]  # batch sizes for each round
-                nr_experiments = [sum(batch_sizes[:round+1]) for round in range(len(batch_sizes))]  # total number of experiments including for each round
-                for entry in range(len(unscaled_data.index)):
-                    scaled_data.iloc[nr_experiments[entry]-1, column_nr] = unscaled_data.iloc[entry,column_nr]  # -1 because iloc is 0-indexed
-
-            return scaled_data  # return the data
-        
-        else:
-            prior_rounds = 10-int(name_results.split("/")[-1][5])
-            recorded_rounds = len(unscaled_data.index)
-            unscaled_data.index = range(prior_rounds,prior_rounds+recorded_rounds)
-            return unscaled_data
-    
+              
     
     @staticmethod
     def find_objectives(folder_name,directory):
@@ -1610,8 +1252,8 @@ class Benchmark:
     
 
     @staticmethod
-    def get_metric_overview(wdir,budget,type_results, name_results, scope_method, objective_mode,
-                        objective_weights, bounds,directory):
+    def get_metric_overview(bounds, budget, name_results, type_results, scope_method = "product", objective_mode = {"all_obj":"max"},
+                        objective_weights = None, directory = "."):
         """
         Helper function to calculate a metric overview for the functions progress_plot() and heatmap_plot().
         See these functions for an overview of the function parameters.
@@ -1629,10 +1271,13 @@ class Benchmark:
         """
 
         # get all the raw files and sort them by hyperparameter combination
+        wdir = Path(directory)
         raw_path = wdir.joinpath(name_results+"/raw_data/")
         setting_dict = {}
         for file in os.listdir(raw_path):
             combi = "_".join(file.split("_")[1:3])
+            if "low_variance" in file:  # special case for low_variance acq fct that has an underscore in its name
+                combi = "_".join(file.split("_")[2:4])
             if combi not in setting_dict.keys():
                 setting_dict[combi] = [file]
             else:
@@ -1645,13 +1290,25 @@ class Benchmark:
         batch_sizes_list = []
         dict_unscaled_mean = {}
         dict_unscaled_stdev = {}
+        dict_unscaled_max = {}
+        dict_unscaled_min = {}
+        dict_dfs_raw_data = {}
+
 
         for combi in setting_dict.keys():
             # list to store the results of all seeds for one setting
             seeded_list = []
             seeds = len(setting_dict[combi])
-            # go through the different files 
-            for seed_file in setting_dict[combi]:
+
+            # go through the different files
+            # (sort them first so that they are saved in the correct order in the returned raw data)
+
+            # Regex to extract seed number
+            seed_pattern = re.compile(r's(\d+)\.csv$')
+            # Sort the files
+            sorted_files = sorted(setting_dict[combi], key=lambda x: int(seed_pattern.search(x).group(1)))
+
+            for seed_file in sorted_files:
 
                 # get lists of the values in each round for each objective and the vendi score (for one seed)
                 dict_raw_data = {}
@@ -1696,6 +1353,18 @@ class Benchmark:
             # process the requested data
             processed_mean = []
             processed_stdev = []
+            processed_max = []
+            processed_min = []
+
+            # generated a copy of the seeded_list that will not be further processed and can be returned
+            # (can loop through a range object for the keys because the result files have been analyzed in sorted order)
+            dfs_raw_data = {
+                i: pd.DataFrame(seeded_list[i],
+                                index = range(len(seeded_list[i]["vendi"])),
+                                columns=seeded_list[i].keys()) 
+                for i in range(len(seeded_list))
+                }
+            dict_dfs_raw_data[combi] = dfs_raw_data
 
             # case when a specific objective (or the only one) or the vendi score is requested
             if type_results.lower() not in ["scope","objective"] or (type_results.lower() == "objective" and len(objectives) == 1):
@@ -1707,6 +1376,8 @@ class Benchmark:
                     processed_stdev  = np.std(stacked, axis=0, ddof=1).tolist()  # using Bessel's correction
                 else:
                     processed_stdev  = np.std(stacked, axis=0).tolist()  # no correction if single seed
+                processed_max = np.max(stacked, axis=0).tolist()
+                processed_min = np.min(stacked, axis=0).tolist()
 
 
             # combined objectives or scope score is requested
@@ -1727,7 +1398,7 @@ class Benchmark:
                 for seed in range(len(seeded_list)):
                     # normalize the data
                     for metric in objectives + ["vendi"]:
-                        seeded_list[seed][metric] = [Benchmark.normalization(score=x,obj_bounds=bounds[metric]) for x in seeded_list[seed][metric]]
+                        seeded_list[seed][metric] = [Benchmark.normalization(score=x,bounds=bounds[metric]) for x in seeded_list[seed][metric]]
 
                     # invert minimization tasks
                     if min_obj:
@@ -1740,6 +1411,8 @@ class Benchmark:
                     # calculate the scope score
                     if type_results.lower() == "scope":
                         seeded_list[seed]["scope"] = [Benchmark.calculate_scope_score(comb_obj,vendi,scope_method) for comb_obj,vendi in zip(seeded_list[seed]["comb_obj"],seeded_list[seed]["vendi"])]
+                        # also record the scope score in dfs_raw_data
+                        dfs_raw_data[seed]["scope"] = seeded_list[seed]["scope"]
 
                 stacked = np.stack([d[type_results.lower()] for d in seeded_list], axis=0)
                 processed_mean = np.mean(stacked, axis=0).tolist()
@@ -1747,19 +1420,29 @@ class Benchmark:
                     processed_stdev  = np.std(stacked, axis=0, ddof=1).tolist()  # using Bessel's correction
                 else:
                     processed_stdev  = np.std(stacked, axis=0).tolist()  # no correction if single seed
+                processed_max = np.max(stacked, axis=0).tolist()
+                processed_min = np.min(stacked, axis=0).tolist()
 
             dict_unscaled_mean[combi] = processed_mean
             dict_unscaled_stdev[combi] = processed_stdev
+            dict_unscaled_max[combi] = processed_max
+            dict_unscaled_min[combi] = processed_min
 
         # ensure all results lists have the same length by appending np.NaN
         max_len = max(len(v) for v in dict_unscaled_mean.values())
         dict_unscaled_mean = {k: v + [np.nan] * (max_len - len(v)) for k, v in dict_unscaled_mean.items()}
         dict_unscaled_stdev = {k: v + [np.nan] * (max_len - len(v)) for k, v in dict_unscaled_stdev.items()}
+        dict_unscaled_max = {k: v + [np.nan] * (max_len - len(v)) for k, v in dict_unscaled_max.items()}
+        dict_unscaled_min = {k: v + [np.nan] * (max_len - len(v)) for k, v in dict_unscaled_min.items()}
+
 
         # convert to dfs
         dfs_unscaled = {}
         dfs_unscaled["means"] = pd.DataFrame.from_dict(dict_unscaled_mean)
         dfs_unscaled["stdev"] = pd.DataFrame.from_dict(dict_unscaled_stdev)
+        dfs_unscaled["max"] = pd.DataFrame.from_dict(dict_unscaled_max)
+        dfs_unscaled["min"] = pd.DataFrame.from_dict(dict_unscaled_min)
+
 
         #  The data is currently shown per batch (which can be different for the different runs). Still needs to be "scaled" to the number of experiments. 
         dfs_scaled = {}
@@ -1777,4 +1460,4 @@ class Benchmark:
             dfs_scaled[key].dropna(how="all",inplace=True)
             dfs_scaled[key] = dfs_scaled[key][sorted(dfs_scaled[key].columns)]
 
-        return dfs_scaled, type_results
+        return dfs_scaled, dict_dfs_raw_data
