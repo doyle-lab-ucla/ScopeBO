@@ -294,8 +294,8 @@ def variance_pruning(idx_test,n_objectives,Vendi_pruning_fraction,cumulative_tes
 
 
 def SHAP_analysis(objectives,
-                  objective_mode,
                   filename,
+                  objective_mode = {"all_obj":"max"}  
                   plot_type = ["bar"],
                   directory = "."):
     """
@@ -306,8 +306,11 @@ def SHAP_analysis(objectives,
             filename of the reaction space csv file including experimental outcomes
         objectives: list
             list of the objectives. E. g.: [yield,ee]
-        objective_mode: list
-            list of the mode of the objectives (max or min)
+        objective_mode: dict
+            Dictionary of objective modes for objectives
+            Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
+            Code will assume maximization for all non-listed objectives
+            Default is {"all_obj":"max"} --> all objectives are maximized   
         plot_type: list of str
             type of SHAP plot to be generated. Options:
                 "bar" - bar plot of mean absolute SHAP values (Default)
