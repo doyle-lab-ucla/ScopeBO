@@ -295,7 +295,7 @@ def variance_pruning(idx_test,n_objectives,Vendi_pruning_fraction,cumulative_tes
 
 def SHAP_analysis(objectives,
                   filename,
-                  objective_mode = {"all_obj":"max"}  
+                  objective_mode = {"all_obj":"max"},  
                   plot_type = ["bar"],
                   directory = "."):
     """
