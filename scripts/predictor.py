@@ -18,6 +18,7 @@ from pathlib import Path
 from scipy.spatial.distance import cdist
 from sklearn.preprocessing import MinMaxScaler
 
+from .mlr_modeling import regression_modeling
 from .model import build_and_optimize_model
 from .space_creator import create_reaction_space
 from .utils import EDBOStandardScaler, calculate_vendi_score, obtain_full_covar_matrix, vendi_pruning, variance_pruning, SHAP_analysis, draw_suggestions
@@ -40,9 +41,9 @@ class ScopeBO:
     @staticmethod
     def generate_features():
         """
-        Generates featurization of the reactants using Mordred descriptors.
+        Generates featurization of the reactants using Morfeus descriptors.
         We recommend to use DFT features, but if these are not available, this function can be
-        used to quickly generate featurization with the computational overhead associated with 
+        used to generate featurization without the computational overhead associated with 
         DFT calculations.
         The function generates the descriptors for all substrates and then uses Pearson
         correlation analysis to remove highly correlated descriptors.
@@ -112,6 +113,77 @@ class ScopeBO:
             directory=directory)
 
         return shap_values, mean_abs_shap_values
+    
+
+    @staticmethod
+    def predict_performance(filename, objective, 
+                        further_objectives = None, n_feat = 3,
+                        repeats_outer = 5, k_outer = 4, 
+                        repeats_inner = 10, k_inner = 10, 
+                        fname_shap = "df_shap.csv",
+                        feature_cutoff = 20, corr_cutoff = 0.7,
+                        fname_pred = "mlr_predictions.csv",
+                        print_pred = True,
+                        directory = "."):
+        """
+        Trains a multivariable linear regression model using a repeated, nested CV scheme 
+        based on the scope samples and predicts the performance for the rest of the search 
+        space.
+        --------------------
+        filename: str
+            name of the searchspace .csv file with experimental results
+        objective: str
+            name of the reaction objective to be modelled
+            NOTE: Only one objective can be modelled!
+        further_objectives: list or None
+            list of all other objectives of the reaction
+            Default is None --> no further objectives
+        n_feat: int 
+            (Default = 3)
+            maximum number of features in the generated model
+        repeats_outer: int 
+            (Default = 5)
+            repeats of the outer CV loop
+        k_outer: int 
+            (Default = 4)
+            number of folds in the outer CV loop
+        repeats_inner: int 
+            (Default = 10)
+            repeats of the outer CV loop
+        k_inner: int 
+            (Default = 10)
+            number of folds in the outer CV loop
+        fname_shap: str 
+            (Default = "df_shap.csv")
+            name for the file generated for the shap analyis in the feature reduction
+        feature_cutoff: int 
+            (Default = 20)
+            maximum number of features to consider in the inner CV loop
+            if there are more features after preprocessing, the top-[value] features in a SHAP 
+            analysis of the ScopeBO surrogate model will be kept
+        corr_cutoff: float 
+            (Default = 0.7)
+            cutoff value for the Pearson correlation analysis in the feature preprocessing
+            features with correlations to other features higher than the value will be removed
+        fname_pred: str
+            (Default = "performance_prediction.csv")
+            name of the generated file with the model predictions
+        print_pred: Boolean
+            (Default = True)
+            print the file with the predictions
+        directory: str (Default = current directory)
+            working directory
+        --------------------
+        Prints the best model and its statistics.
+        Returns the predictions.
+        """
+
+        # call the outsourced function (in mlr_modeling.py)
+        df_pred = regression_modeling(filename, objective, further_objectives, n_feat,
+                        repeats_outer, k_outer, repeats_inner, k_inner, fname_shap,
+                        feature_cutoff, corr_cutoff, fname_pred, print_pred, directory)
+        
+        return df_pred
 
     
     def get_vendi_score(self, objectives, directory='.', filename='reaction_space.csv'):
@@ -234,6 +306,7 @@ class ScopeBO:
         
         return df
     
+
     def run(self,
             objectives, 
             objective_mode = {"all_obj":"max"}, 
