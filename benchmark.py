@@ -41,8 +41,6 @@ class Benchmark:
     Functions for data collection:
         collect_data: 
             main functionality for running scopes
-        continue_data_collection:
-            continuing scope running by extending existing scopes
         change_featurization:
             recalculating Vendi scores in existing benchmark data with a different featurization
 
@@ -51,8 +49,6 @@ class Benchmark:
             plot the overall results of scopes
         progress_plot:
             plot the progression of scopes with increasing scope size
-        results_for_run_conti:
-            version of progress_plot that works for the results of continue_data_collection
         track_samples:
             visualize the selected samples on a UMAP
         show_scope:
@@ -111,7 +107,7 @@ class Benchmark:
         return mcolors.to_hex((r, g, b))
 
     
-    def collect_data(self, filename_labelled, objectives, seeds, name_results, 
+    def collect_data(self, filename_labelled, objectives, name_results, specific_seed = None, seeds = 40, idx_to_keep = None,
                      objective_mode = {"all_obj":"max"}, init_sampling_method="random", Vendi_pruning_fractions = [13], batches=[3], budget=27, 
             objective_weights = None, sample_threshold = None, enforce_dissimilarity=False, pruning_metric = "vendi_batch", 
             acquisition_function_mode = 'balanced', dft_filename = None, filename_prediction = "df_benchmark.csv", directory='.'):
@@ -136,6 +132,9 @@ class Benchmark:
 
                 The raw result files are saved as [budget][acquisition_function_mode]_b[batch]_V[Vendi_pruning_fraction]_s[seed].csv
                 They are located in a subfolder "raw_data".
+
+                If specific_seed != None, the raw results are directly located in name_results.
+
             Summarized data:
                 These files contain either objective value data (averaged for each batch round) ("obj") or
                 Vendi score data ("vendi"). The rows correspond to the different batch sizes in batches (noted as indices). The columns
@@ -145,6 +144,8 @@ class Benchmark:
                 In the case of multiple objectives, a separate file for each objective value as well as a file containing the combined objective values are generated.
 
                 Example name for a run with the objectives "yield" and "selectivity": "benchmark_obj[yield__selectivity]_av.csv" --> average objective value data
+                
+                Summarized data is only generated if the variable specific_seed = None (default).
         
         -------------------------------------------------------------------------------------
 
@@ -164,8 +165,16 @@ class Benchmark:
                 "lhs": LHS sampling
         batches: list
             list of batch sizes (as int numbers)
-        seeds: list
-            list of seed values
+        seeds: int
+            number of different random seeds to be evaluate (will use range(seeds))
+            Default is 40.
+        specific_seed: int or None
+            Ignored if None (default).
+            If specified, will only run the given random seed (overwriting variable seeds).
+        idx_to_keep: list or None
+            list of indices of the labelled dataframe which won't be removed at the beginning of the scope run
+            Enables to "hot-start" a scope with prior data.
+            Default is None (remove all idx and start from the scope from scratch).
         objective_mode: dict
             Dictionary of objective modes for objectives
             Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
@@ -196,7 +205,15 @@ class Benchmark:
 
         # Generate a copy of the DataFrame with labelled data and remove the objective data.
         df_unlabelled = df_labelled.copy(deep=True)
-        df_unlabelled.drop(columns=objectives,inplace=True)
+        # check if some samples should be retained for the start of the scope
+        if idx_to_keep is not None:
+            # delete all objective data apart from the specified ones
+            for obj in objectives:
+                df_unlabelled.loc[~df_unlabelled.index.isin(idx_to_keep),obj] = "PENDING"
+                print("The scope will be hot-started with the following samples:")
+                print(f"{df_unlabelled.index[~df_unlabelled.isin(['PENDING']).any(axis=1)].tolist()}") 
+        else:
+            df_unlabelled.drop(columns=objectives,inplace=True)
 
         # Instantiate empty df for the analyzed results.
         Vendi_names = []
@@ -255,7 +272,13 @@ class Benchmark:
                 seeded_list_obj = []
                 seeded_list_vendi = []
 
-                for seed in range(seeds):     
+                # test the number of random seeds as indicated in the variable seeds
+                seeds_to_test = range(seeds)
+                # if a specific seed was requested, only test that one
+                if specific_seed is not None:
+                    seeds_to_test = [specific_seed]
+
+                for seed in seeds_to_test:     
                     # Reset the csv file for the campaign by removing the objective data (meaning overwriting with the unlabelled df).
                     df_unlabelled.to_csv(csv_filename_pred, index=True, header=True)
                     if df_dft is not None:
@@ -382,7 +405,15 @@ class Benchmark:
                     
                     # Save raw results as a csv.
                     df_results = pd.DataFrame(raw_results,columns=[f"obj_values {objectives}","Vendi_score","eval_samples","cut_samples"])
-                    csv_filename_results = wdir.joinpath(name_results+f"/raw_data/{budget}{acquisition_function_mode}_b{batch_names[batches.index(batch)]}_V{Vendi_names[Vendi_pruning_fractions.index(Vpf)]}_s{seed}.csv")
+                    if specific_seed is None:
+                        csv_filename_results = wdir.joinpath(name_results+f"/raw_data/{budget}{acquisition_function_mode}_"\
+                                                             f"b{batch_names[batches.index(batch)]}_V"\
+                                                                f"{Vendi_names[Vendi_pruning_fractions.index(Vpf)]}_s{seed}.csv")
+                    else:  # no raw_dat subfolder if only one specific seed was requested
+                        csv_filename_results = wdir.joinpath(name_results+f"/{budget}{acquisition_function_mode}_b"\
+                                                             f"{batch_names[batches.index(batch)]}_V"\
+                                                                f"{Vendi_names[Vendi_pruning_fractions.index(Vpf)]}_s{seed}.csv")
+
                     if len(df_results.iloc[0,0]) == 1:  # flatten unnecessary list of lists for mono-objective runs
                         for idx in df_results.index:
                             df_results.loc[idx,f"obj_values {objectives}"] = str(df_results.loc[idx,f"obj_values {objectives}"][0])
@@ -424,18 +455,16 @@ class Benchmark:
 
                 df_vendi_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([sum(i) / len(i) for i in zip(*seeded_list_vendi)])
 
-
-
-        # Save the dataframes with the processed results as csv files.        
-        df_obj_av.to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{'__'.join(objectives)}]_av.csv"),index=True,header=True)
-        df_obj_stdev.to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{'__'.join(objectives)}]_stdev.csv"),index=True,header=True)
-        df_vendi_av.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_av.csv"),index=True,header=True)
-        df_vendi_stdev.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_stdev.csv"),index=True,header=True)
-        if len(objectives) > 1:
-            for objective in objectives:
-                dfs_indiv_obj_av[objective].to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{objective}]_av.csv"),index=True,header=True)
-                dfs_indiv_obj_stdev[objective].to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{objective}]_stdev.csv"),index=True,header=True)
-
+        # Save the dataframes with the processed results as csv files (only if no specific seed).
+        if specific_seed is None:        
+            df_obj_av.to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{'__'.join(objectives)}]_av.csv"),index=True,header=True)
+            df_obj_stdev.to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{'__'.join(objectives)}]_stdev.csv"),index=True,header=True)
+            df_vendi_av.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_av.csv"),index=True,header=True)
+            df_vendi_stdev.to_csv(wdir.joinpath(name_results+"/benchmark_vendi_stdev.csv"),index=True,header=True)
+            if len(objectives) > 1:
+                for objective in objectives:
+                    dfs_indiv_obj_av[objective].to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{objective}]_av.csv"),index=True,header=True)
+                    dfs_indiv_obj_stdev[objective].to_csv(wdir.joinpath(name_results+f"/benchmark_obj[{objective}]_stdev.csv"),index=True,header=True)
 
         print(f"Data collection finished! Results are saved in the subfolder {name_results}.")
 
