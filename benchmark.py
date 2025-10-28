@@ -265,18 +265,19 @@ class Benchmark:
             
         # Run all the requested parameter settings.
         run_counter = 1  # variable for feedback during run
-        total_runs = len(batches) * len(Vendi_pruning_fractions) * seeds  # same
+
+        # test the number of random seeds as indicated in the variable seeds
+        seeds_to_test = range(seeds)
+        # if a specific seed was requested, only test that one
+        if specific_seed is not None:
+            seeds_to_test = [specific_seed]
+
+        total_runs = len(batches) * len(Vendi_pruning_fractions) * len(seeds_to_test)  # same
         for batch in batches: 
             for Vpf in Vendi_pruning_fractions:
                 
                 seeded_list_obj = []
                 seeded_list_vendi = []
-
-                # test the number of random seeds as indicated in the variable seeds
-                seeds_to_test = range(seeds)
-                # if a specific seed was requested, only test that one
-                if specific_seed is not None:
-                    seeds_to_test = [specific_seed]
 
                 for seed in seeds_to_test:     
                     # Reset the csv file for the campaign by removing the objective data (meaning overwriting with the unlabelled df).
@@ -422,38 +423,40 @@ class Benchmark:
                     print (f"Finished campaign {run_counter} of {total_runs}.")
                     run_counter+= 1
                 
-                # Calculate the averages and standard deviations across the different seeds and save the results.
-                obj_value = [[sum(matrix[i][j] for matrix in seeded_list_obj) / len(seeded_list_obj) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
-                if len(obj_value[0]) == 1:  # mono-objective
-                    df_obj_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_value for value in this_round])
-                else:  # multi-objective
-                    df_obj_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str(obj_value)
-                    # also populate the dataframes for the individual objectives
-                    for i in range(len(objectives)):
-                        dfs_indiv_obj_av[objectives[i]].loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([obj[i] for obj in obj_value])
-                # Standard deviation can only be calculated if there are at least 2 values. Set to zero if there is only one.
-                if seeds > 1:
-                    obj_std = [[stdev([matrix[i][j] for matrix in seeded_list_obj]) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
-                    if len(obj_std[0]) == 1:  # mono-objective
-                        df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_std for value in this_round])
+                # only do summary analysis if specific seeds = None
+                if specific_seed is None:
+                    # Calculate the averages and standard deviations across the different seeds and save the results.
+                    obj_value = [[sum(matrix[i][j] for matrix in seeded_list_obj) / len(seeded_list_obj) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
+                    if len(obj_value[0]) == 1:  # mono-objective
+                        df_obj_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_value for value in this_round])
                     else:  # multi-objective
-                        df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str(obj_std)
+                        df_obj_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str(obj_value)
                         # also populate the dataframes for the individual objectives
                         for i in range(len(objectives)):
-                            dfs_indiv_obj_stdev[objectives[i]].loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([obj[i] for obj in obj_std])
-                    df_vendi_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([stdev(i) for i in zip(*seeded_list_vendi)])
-                else:
-                    obj_std = [[0 for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
-                    if len(obj_std[0]) == 1:  # mono-objective
-                        df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_std for value in this_round])
-                    else:  # multi-objective
-                        df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str(obj_std)
-                        # also populate the dataframes for the individual objectives
-                        for i in range(len(objectives)):
-                            dfs_indiv_obj_stdev[objectives[i]].loc[str(batch),Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([obj[i] for obj in obj_std])
-                    df_vendi_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([0 for i in zip(*seeded_list_vendi)])  
+                            dfs_indiv_obj_av[objectives[i]].loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([obj[i] for obj in obj_value])
+                    # Standard deviation can only be calculated if there are at least 2 values. Set to zero if there is only one.
+                    if seeds > 1:
+                        obj_std = [[stdev([matrix[i][j] for matrix in seeded_list_obj]) for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
+                        if len(obj_std[0]) == 1:  # mono-objective
+                            df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_std for value in this_round])
+                        else:  # multi-objective
+                            df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str(obj_std)
+                            # also populate the dataframes for the individual objectives
+                            for i in range(len(objectives)):
+                                dfs_indiv_obj_stdev[objectives[i]].loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([obj[i] for obj in obj_std])
+                        df_vendi_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([stdev(i) for i in zip(*seeded_list_vendi)])
+                    else:
+                        obj_std = [[0 for j in range(len(seeded_list_obj[0][0]))] for i in range(len(seeded_list_obj[0]))]
+                        if len(obj_std[0]) == 1:  # mono-objective
+                            df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([value for this_round in obj_std for value in this_round])
+                        else:  # multi-objective
+                            df_obj_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str(obj_std)
+                            # also populate the dataframes for the individual objectives
+                            for i in range(len(objectives)):
+                                dfs_indiv_obj_stdev[objectives[i]].loc[str(batch),Vendi_names[Vendi_pruning_fractions.index(Vpf)]] = str([obj[i] for obj in obj_std])
+                        df_vendi_stdev.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([0 for i in zip(*seeded_list_vendi)])  
 
-                df_vendi_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([sum(i) / len(i) for i in zip(*seeded_list_vendi)])
+                    df_vendi_av.loc[batch_names[batches.index(batch)],Vendi_names[Vendi_pruning_fractions.index(Vpf)]]  = str([sum(i) / len(i) for i in zip(*seeded_list_vendi)])
 
         # Save the dataframes with the processed results as csv files (only if no specific seed).
         if specific_seed is None:        
