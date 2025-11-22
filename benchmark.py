@@ -106,6 +106,10 @@ class Benchmark:
         colors = [doyle_colors[1],"#FFFFFFD1",doyle_colors[0]]
         self.cont_cmap = LinearSegmentedColormap.from_list("Doyle_cont", colors)
 
+        # Define and save a second continuous colormap
+        colors = [doyle_colors[3],"#FFFFFFD1",doyle_colors[2]]
+        self.cont_cmap2 = LinearSegmentedColormap.from_list("Doyle_cont2", colors)
+
     
     @staticmethod
     def _adjust_lightness(color, factor=1.2):
@@ -763,10 +767,10 @@ class Benchmark:
 
 
     def track_samples(self,filename_umap, filename_data,name_results,scope_method="product", 
-                      objective_mode = {"all_obj":"max"}, objective_weights=None, 
+                      objective_mode = {"all_obj":"max"}, objective_weights=None, obj_plot_bounds = None, cbar_scaling = None,
                       bounds = {"rate":(2.349,1.035),"vendi":(6.366,1.941)},display_cut_samples=True, obj_to_display = None, 
-                      dpi = 100, figsize = (10,8), size_scaling = 1, filename_labelled=None,
-                      rounds_to_display = None, label_round=False, filename_figure=None,
+                      dpi = 100, figsize = (10,8), size_scaling = 1, filename_labelled=None, show_colorbar = True,
+                      rounds_to_display = None, label_round=False, filename_figure=None, hide_axis = False,
                       restrict_samples=None, directory='.'):
         """
         Visually tracks the evaluated and cut samples of a single benchmarking run on a provided UMAP.
@@ -793,6 +797,10 @@ class Benchmark:
                 Weights for averaging the objective data
                 Example: {"yield": 0.3, "ee": 0.7}
                 Default is None --> all objectives will be averaged with equal weights.
+            obj_plot_bounds: tuple or None
+                option to provide bounds (max,min) for the color bar (default is None)
+            cbar_scaling: int or None
+                option to scale the values on the colorbar (e. g. if yield scale is [0,1] instead of [0,100])
             bounds: dict
                 dictionary of bounds for the individual metrics (vendi, all objectives)
                 Default values are for the ArI dataset.
@@ -801,11 +809,9 @@ class Benchmark:
                 If True, the samples in the plot will be colored by the round when they were selected.
                 If False, the samples will be displayed by their objective value 
                 (default is first listed objective - can be changed in variable obj_to_display)
-            obj_to_display: dict or None
+            obj_to_display: str or None
                 color the selected points by objective values if display_cut_samples is False.
-                Default is None (take the first listed objective and its extreme values as bounds)
-                Can also provide a dict with the objective name and its extreme values (max,min).
-                E. g. : obj_to_display = {"yield":(100,0)}
+                Default is None (take the first listed objective).
             dpi: int
                 resolution of the displayed figure
                 Default is 100 (also matplotlib default).
@@ -819,6 +825,8 @@ class Benchmark:
                 name of the csv file containing the labelled data for the entire searchspace
                 If specified (default is None) and display_cut_samples is False, the pending/cut samples will be
                 colored by their theoretical performance.
+            show_colorbar: Boolean
+                Option to show a colorbar (default is True).
             rounds_to_display: int or None
                 Specify how many rounds of the run you want to display (starting from the first one).
                 The metrics will also only be calculate for the these rounds.
@@ -826,6 +834,8 @@ class Benchmark:
                 Default is None --> shows all rounds
             label_round: Boolean
                 label the suggested samples by the round of selection. Default = False.
+            hide_axis: Boolean
+                hide the axis ticks if True (Default is False).
             restrict_samples: str
                 Option to restrict the UMAP samples to the samples were in the actually used searchspace
                 (e. g. when only a subset of a dataset was used for a run)
@@ -905,15 +915,17 @@ class Benchmark:
         df_umap["status"] = "neutral"
         df_umap["round"] = 0
         obj_plot_name = None
-        obj_plot_bounds = None
         if obj_to_display is None:
             obj_plot_name = objectives[0]
             obj_plot = dict_obj_values[obj_plot_name]
-            obj_plot_bounds = (max(obj_plot),min(obj_plot))
+            if obj_plot_bounds is None:
+                obj_plot_bounds = (max(obj_plot),min(obj_plot))
         else:
-            obj_plot_name = next(iter(obj_to_display))
+
+            obj_plot_name = obj_to_display
             obj_plot = dict_obj_values[obj_plot_name]
-            obj_plot_bounds = obj_to_display[obj_plot_name]
+            if obj_plot_bounds is None:
+                obj_plot_bounds = (max(obj_plot),min(obj_plot))
 
         df_umap.index = df_umap.index.astype(str)
         # Assign the samples to the df_umap dataframe.
@@ -934,17 +946,15 @@ class Benchmark:
         df_umap.sort_values("status",inplace=True,ascending=True)
 
         # Plot the results
-        plt.figure(figsize=figsize,dpi=dpi)
+        plt.figure(figsize=figsize,dpi=dpi, constrained_layout=True)
 
         if display_cut_samples:  # color by round
-            colormap = self.cont_cmap
-            # Add a colorbar for the 'hue' (selected/ removed points)
+            colormap = self.cont_cmap2
             norm = mpl.colors.Normalize(vmin=1, vmax=len(df_data.index))  # Normalize the colorscale
-            # Plot the non-selected points first
+
             df_selected =df_umap[df_umap["status"] == "suggested"]
             df_pending = df_umap[df_umap['round'] == 0]
             df_cut = df_umap[df_umap["status"] == "removed"]
-
 
             plt.scatter(
                 df_pending["UMAP1"], df_pending["UMAP2"], s=40*size_scaling, 
@@ -959,16 +969,21 @@ class Benchmark:
             # Plot the selected points
             plt.scatter(df_selected["UMAP1"],df_selected["UMAP2"],c=df_selected["round"],
                                 cmap=colormap,norm=norm,s=250*size_scaling,alpha=1,edgecolor='k',
-                                linewidth=2*size_scaling, zorder=3)
+                                linewidth=3*size_scaling, zorder=3)
 
-            sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
-            sm.set_array([])  # Empty array for ScalarMappable
-            cbar = plt.colorbar(sm)
-            cbar.set_label('Round')
+            if show_colorbar:
+                sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
+                sm.set_array([])  # Empty array for ScalarMappable
+                cbar = plt.colorbar(sm)
+                max_round = int(df_umap["round"].max())
+                cbar.set_ticks(range(1, int(max_round)+1, 2))
+                cbar.set_ticklabels([str(x) for x in range(1, int(max_round)+1, 2)])
+                cbar.set_label('Round')
 
         else:  # color by obj values
             # Separate selected and non-selected points
             df_umap[obj_plot_name] = df_umap[obj_plot_name].astype(float)
+            df_umap.index = df_umap.index.astype(str)
             df_selected =df_umap.loc[df_umap["status"] == "suggested"]
             df_pending =df_umap.loc[df_umap["status"] != "suggested"].copy()
 
@@ -986,7 +1001,9 @@ class Benchmark:
             else:
                 # color by their theoretical performance
                 df_labelled = pd.read_csv(filename_labelled, index_col = 0, header = 0)
+                df_labelled.index = df_labelled.index.astype(str)
                 for idx in df_pending.index:
+                    idx = str(idx)
                     df_pending.loc[idx,obj_plot_name] = df_labelled.loc[idx,obj_plot_name]
                 plt.scatter(df_pending["UMAP1"], df_pending["UMAP2"], cmap=cmap,norm=norm,c=df_pending[obj_plot_name], s=40*size_scaling, 
                         alpha=0.6, linewidth=0.3*size_scaling, edgecolor="k")
@@ -996,8 +1013,15 @@ class Benchmark:
                                           cmap=cmap,norm=norm,s=250*size_scaling,alpha=1,edgecolor='k',linewidth=2*size_scaling)
 
             # Add colorbar
-            cbar = plt.colorbar(scatter_numeric)
-            cbar.set_label(f"{obj_plot_name.capitalize()}")
+            if show_colorbar:
+                cbar = plt.colorbar(scatter_numeric)
+                if cbar_scaling is not None:
+                    tick_labels = [f"{int(t * cbar_scaling)}" for t in cbar.get_ticks()]
+                    cbar.set_ticklabels(tick_labels)
+                cbar_label = obj_plot_name.capitalize()
+                if obj_plot_name.lower() == "yield":
+                    cbar_label = "Yield (%)"
+                cbar.set_label(cbar_label)
 
         if label_round:  # label the round of selection if requested
             texts = []
@@ -1005,19 +1029,23 @@ class Benchmark:
                 texts.append(plt.text(df_umap.loc[i,'UMAP1'], df_umap.loc[i,'UMAP2'], int(df_umap.loc[i,'round']), 
                                       size='medium', color='black', weight='semibold'))
             adjust_text(texts,expand_points=(1.3,1.3),force_static=(10,10),arrowprops={"arrowstyle":"-","color":"black"})
+        
+        if hide_axis:
+            plt.xticks([])
+            plt.yticks([])
+
         plt.xlabel("UMAP1")
         plt.ylabel("UMAP2")
-        plt.tight_layout()
         plt.show()
 
         if filename_figure is not None:
-            figure = plot.get_figure()
+            figure = plt.get_figure()
             
             figure.savefig(wdir.joinpath(filename_figure))
             
     
     def show_scope(self,filename_data,name_results,by_round=True,rounds_to_display=None,common_core=None,
-                   give_data=False,suppress_figure=False,directory='.',molsPerRow=6):
+                   give_data=False,suppress_figure=False,directory='.',molsPerRow=6, scale_values = 1, label_suffix = "", round_values = None):
         """
         Depict the substrates that were selected for the scope.
         NOTE: The function is only implemented for singe-objective scenarios.
@@ -1043,6 +1071,15 @@ class Benchmark:
                 option to suppress printing of the scope figure (default= False)
             directory: str
                 current directory. Default: "."
+            scale_values: int
+                Option to scale the result values (e. g. if yields are given on a [0,1]-scale but should be displayed on [0,100]-scale)
+                Default is 1 (no scaling).
+            label_suffix: str
+                label (e. g. unit) to be added to the result values
+                Default is an empty string (no label)
+            round_values: int or None
+                round the objective values to the indicated number of decimal digits if variable is not None (Default). 
+                The rounding is applied after scaling.
         """
 
         # Set directory.
@@ -1087,27 +1124,35 @@ class Benchmark:
         
         if not suppress_figure:
             if by_round:
-                for round in df_data.index:
-                    smiles_list = df_data.loc[round,"eval_samples"]
+                for scope_round in df_data.index:
+                    smiles_list = df_data.loc[scope_round,"eval_samples"]
                     mol_list = generate_representation(smiles_list)
                     # Draw the aligned molecules
-                    print(f"Molecules selected in round {round+1}:")
+                    print(f"Molecules selected in round {scope_round+1}:")
+                    if round_values is None:
+                        legends = [f"{sample_dict[smiles]*scale_values}"+label_suffix for smiles in smiles_list]
+                    else:
+                        legends = [f"{round(sample_dict[smiles]*scale_values,round_values)}"+label_suffix for smiles in smiles_list]
                     depiction = Draw.MolsToGridImage(
                         mol_list,
                         molsPerRow=len(mol_list),
                         subImgSize=(200, 200),
-                        legends = [str(sample_dict[smiles]) for smiles in smiles_list]
+                        legends = legends
                         )
                     display(depiction)
 
             else:
                 smiles_list = [smiles for round_list in [df_data.loc[round,"eval_samples"] for round in df_data.index] for smiles in round_list]
                 mol_list = generate_representation(smiles_list)
+                if round_values is None:
+                    legends = [f"{sample_dict[smiles]*scale_values}"+label_suffix for smiles in smiles_list]
+                else:
+                    legends = [f"{round(sample_dict[smiles]*scale_values,round_values)}"+label_suffix for smiles in smiles_list]
                 depiction = Draw.MolsToGridImage(
                     mol_list,
                     molsPerRow=molsPerRow,
                     subImgSize=(200, 200),
-                    legends = [str(sample_dict[smiles]) for smiles in smiles_list]
+                    legends = legends
                     )
                 display(depiction)
         

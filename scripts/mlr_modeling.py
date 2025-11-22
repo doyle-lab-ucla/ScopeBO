@@ -163,7 +163,7 @@ def regression_modeling(filename, objective,
             X_val_sc = pd.DataFrame(scaler.transform(X_val), columns = features)
 
             # test all feature combinations (up to 3 features) on the inner train
-            # keep the best feature combinations (returns tuples of comb and rss)
+            # keep the best feature combinations (returns tuples of comb and RSS)
             inn_train_models = _feature_search(X_train_inn_sc, y_train_inn, features, n_feat)
 
             # evaluate the top models on the inner validation data
@@ -179,7 +179,8 @@ def regression_modeling(filename, objective,
 
         # average rsme for each feature comb selected by the inner cv models
         best_inn_models = {k: np.mean(v) for k, v in inn_cv_models.items()}
-        # get the features with lowest mean rsme
+
+        # get the features with lowest mean rsme (inner CV champion)
         best_inn_model_feat = list(min(best_inn_models, key=best_inn_models.get))
 
         # fit a scaler on the outer train and scale it
@@ -243,9 +244,9 @@ def regression_modeling(filename, objective,
     for k, v in model_settings.items():
         print(f"{k}: {v}")
 
-    print("\nModel statistics:")
-
-    # TODO: add statistics!!!
+    print("\nModel statistics (on outer CV splits):")
+    print("Mean RMSE:", best_out_models[tuple(champion_feat)][3])
+    print("Mean R2 value:", best_out_models[tuple(champion_feat)][4])
 
     # use the champion model to predict on the full search space
 

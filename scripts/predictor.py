@@ -23,6 +23,7 @@ from .model import build_and_optimize_model
 from .space_creator import create_reaction_space
 from .utils import EDBOStandardScaler, calculate_vendi_score, obtain_full_covar_matrix, vendi_pruning, variance_pruning, SHAP_analysis, draw_suggestions
 from .acquisition import greedy_run, explorative_run, random_run, low_variance_selection, hypervolume_improvement
+from .featurization import calculate_morfeus_descriptors
 
 
 tkwargs = {
@@ -39,26 +40,66 @@ class ScopeBO:
 
 
     @staticmethod
-    def generate_features():
+    def generate_features(smiles_list,
+                          filename,
+                          common_core=None,
+                          chunk_size=10,
+                          find_restart = True,
+                          starting_smiles_nr=1,
+                          chunk_label=1):
         """
-        Generates featurization of the reactants using Morfeus descriptors.
+        Generates featurization of the reactants using Morfeus descriptor from a SMILES list.
         We recommend to use DFT features, but if these are not available, this function can be
         used to generate featurization without the computational overhead associated with 
         DFT calculations.
-        The function generates the descriptors for all substrates and then uses Pearson
-        correlation analysis to remove highly correlated descriptors.
+        Although the morfeus calculations are much faster than DFT calculations, they can still
+        take some time. The feature calculation can be interrupted and continued at the a later
+        time by simply running the function again.
         --------------------------------------------------------------------------------------
         Inputs:
-            reactants: list of str
-                names of the csv files containing all possible substrates for the respective
-                reactant.
+            smiles_list: list
+                list of smiles strings
+            common_core: str or None
+                smarts for the common core of interest
+                Default is None --> will look for the largest common substructure in the molecule
+            filename: str
+                path for the generated dataset
+            common_core: str or None
+                SMARTS for a substructure for which atom descriptors will be extracted
+                If common_core=None (Default), the atom descriptors will be calculated for the
+                maximum common substructure.
+            chunk_size: int
+                number of compounds that will be calculated in one chunk before saving the obtained data
+                at the end of the run, all chunks will be concatenated.
+                Default: 25
+            find_restart: Boolean
+                If True, the  algorithm will parse if some chunks were already calculated and auto-restart 
+                with the next chunk, overwriting the starting_smiles_nr and chunk_label variables.
+            starting_smiles_nr: int (one-indexed)
+                first entry of the smiles list to be calculated
+                Default: 1
+                (useful for restarting in case the calculation crashes)
+                NOTE: overwriting if find_restart = True
+            chunk_label: int (one-indexed)
+                label for the next chunk to be calculated
+                Default: 1
+                (useful for restarting in case the calculation crashes)
+                NOTE: overwritten if find_restart = True
         --------------------------------------------------------------------------------------
         Returns:
-            No returns, but generates csv files for all reactants with their featurization. 
-            These can then be read into the create_reaction_space function.
+            Generates a csv file for all reactants with their featurization.
+            Returns the featurization data as a dataframe.
         """
 
-        # NOTE: write function code. Maybe outsource to other file.
+        # Call the function from featurization.py
+        _, df_combined = calculate_morfeus_descriptors (smiles_list = smiles_list, filename = filename,
+                                       common_core = common_core, chunk_size = chunk_size,
+                                       find_restart = find_restart,
+                                       starting_smiles_nr = starting_smiles_nr,
+                                       chunk_label = chunk_label)
+        
+        return df_combined
+    
     
     @staticmethod
     def create_reaction_space(reactants, feature_processing=True, directory='./', filename='reaction_space.csv'):
@@ -312,10 +353,10 @@ class ScopeBO:
             objective_mode = {"all_obj":"max"}, 
             objective_weights=None,
             directory='.', filename='reaction_space.csv',
-            batch=None, init_sampling_method='random', seed=42,
-            Vendi_pruning_fraction=None,
-            pruning_metric = "vendi_sample",
-            acquisition_function_mode='greedy',
+            batch=3, init_sampling_method='random', seed=42,
+            Vendi_pruning_fraction=13,
+            pruning_metric = "vendi_batch",
+            acquisition_function_mode='balanced',
             give_alternative_suggestions=True,
             show_suggestions=True,
             sample_threshold=None,
@@ -432,24 +473,6 @@ class ScopeBO:
 
         # check if there are DataFrame entries with experimental results
         idx_experimental_results = original_df[~original_df.isin(['PENDING']).any(axis=1)].index
-        # set the batch size and/or Vendi_pruning_fraction if the default is used
-        if (batch is None) or (Vendi_pruning_fraction is None):
-            batch_flag = True
-            if batch is not None:
-                batch_flag = False
-            Vendi_flag = True
-            if Vendi_pruning_fraction is not None:
-                Vendi_flag = False
-            # set up dict with the scope sizes after each round in optimized conditions and
-            # the corresponding Vendi pruning fraction
-            scope_list = {25:11,20:11,15:11,10:11,6:39,5:39,4:11}
-            # assign the values
-            for scope_size in scope_list.keys():
-                if scope_size > len(idx_experimental_results):
-                    if batch_flag:  # assign batch size if none is given
-                        batch = scope_size - len(idx_experimental_results)
-                    if Vendi_flag:  # assign Vendi pruning fraction if none is given
-                        Vendi_pruning_fraction = scope_list[scope_size]
 
         # If there was not an objective column in the data frame prior to
         # adding missing objective column, there are no experimental results
