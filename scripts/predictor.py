@@ -306,6 +306,7 @@ class ScopeBO:
                 display_cut_samples = True,
                 figsize = (10,8),
                 dpi = 600,
+                draw_structures = True,
                 show_figure = True,
                 cbar_title = None,
                 return_dfs = False,
@@ -333,6 +334,8 @@ class ScopeBO:
             Size of the generated UMAP figure in inches.
         dpi : int, default=600
             Resolution of the output figure.
+        draw_structures : bool, default=True
+            Draw the structures of the evaluated samples. Requires SMILES strings as index in the CSV file.
         show_figure : bool, default=True
             Whether to display the UMAP plot.
         cbar_title : str, optional
@@ -349,7 +352,7 @@ class ScopeBO:
         df_dict = UMAP_view(filename=filename, obj_to_show=obj_to_show, obj_bounds=obj_bounds,
                             objectives=objectives, display_cut_samples=display_cut_samples,
                             figsize=figsize, dpi=dpi, show_figure=show_figure, cbar_title=cbar_title,
-                            return_dfs=return_dfs, directory=directory)
+                            return_dfs=return_dfs, directory=directory, draw_structures=draw_structures)
 
         if return_dfs:
             return df_dict

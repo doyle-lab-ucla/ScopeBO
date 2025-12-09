@@ -6,9 +6,13 @@ import re
 from statistics import stdev
 import sys
 
+from IPython.display import display
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import Draw
+from rdkit.Chem import AllChem
 from sklearn.preprocessing import scale
 from umap import UMAP
 
@@ -37,6 +41,7 @@ def UMAP_view(filename,
               display_cut_samples = True,
               figsize = (10,8),
               dpi = 600,
+              draw_structures = True,
               show_figure = True,
               cbar_title = None,
               return_dfs = False,
@@ -68,6 +73,9 @@ def UMAP_view(filename,
 
     dpi : int, default=600
         Resolution of the output figure.
+
+    draw_structures : bool, default=True
+        Draw the structures of the evaluated samples. Requires SMILES strings as index in the CSV file.
 
     show_figure : bool, default=True
         Whether to display the UMAP plot.
@@ -131,8 +139,31 @@ def UMAP_view(filename,
     df_neutral = df_unseen[df_unseen["priority"] == 0].copy()
     df_cut = df_unseen[df_unseen["priority"] == -1].copy()
 
+    # draw the structures if requested
+    if draw_structures:
+        # Extract the suggested molecules and draw them.
+        scope_substrates  = df_seen.index.to_list()
+        scope_substrates = [str(entry.encode().decode('unicode_escape')) for entry in scope_substrates]
+        scope_labels = df_seen["labels"].to_list()
+
+        print("Structures of the scope substrates:")
+        try:
+            mol_list = [Chem.MolFromSmiles(smiles) for smiles in scope_substrates]
+            # Draw the aligned molecules
+            depiction = Draw.MolsToGridImage(
+                mol_list,
+                molsPerRow=len(mol_list),
+                subImgSize=(200, 200),
+                legends=[str(result_val) for result_val in scope_labels]
+                )
+            display(depiction)
+        except:
+            print(f"Could not draw the molecules in {scope_substrates}.")
+            print(f"Please label your molecules with SMILES strings to draw the results of the scope.")
+
     # print the UMAP if requested
     if show_figure:
+        print("UMAP projection of the reaction space (evaluated samples colored, pruned samples marked with X):")
         plt.figure(figsize=figsize, dpi = dpi, constrained_layout = True)
 
         colormap = cont_cmap
