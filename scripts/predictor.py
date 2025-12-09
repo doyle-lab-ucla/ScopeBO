@@ -56,6 +56,11 @@ class ScopeBO:
         Although the morfeus calculations are much faster than DFT calculations, they can still
         take some time. The feature calculation can be interrupted and continued at the a later
         time by simply running the function again.
+
+        NOTE: The function generates a temporary folder "featurization_temp" during execution
+        that is deleted at the end of the run. In case of an interrupted run, this folder serves
+        as a storage for the calculated chunks. Do not delete this folder if you want to continue
+        an interrupted calculation at a later point!
         --------------------------------------------------------------------------------------
         Inputs:
             smiles_list: list
@@ -104,24 +109,89 @@ class ScopeBO:
     
     
     @staticmethod
-    def create_reaction_space(reactants, feature_processing=True, directory='./', filename='reaction_space.csv'):
+    def create_reaction_space(reactants,
+                              feature_processing=True,
+                              suggest_samples=True,
+                              objectives=None,
+                              draw_suggested_samples=True,
+                              directory='./',
+                              filename='reaction_space.csv'):
         """
-        Creates a reaction space with all possible scope combinations.
+        Creates a reaction space csv file with all possible scope combinations and directly suggests three 
+        initial scope entries by random sampling.
+        ------------------------------------------------------------------------
         
-        reactants is a list of csv filenames (one file per reactant). The csv files should 
-        contain the name of the reactant in the first column and features in the other columns.
+        reactants: list or dictionary
+            list of csv file names (as strings). One file per starting material.
+                Example: ['reactant1.csv','reactant2.csv']
+            The algorithm will set a prefix for the features associated with each
+            reactant. By supplying a dictionary for reactants, the feature prefixes
+            can be set (as the dict values). Otherwise, generic "reactant#" prefixes
+            will be used.
+            The csv files should contain the names of the compounds in the first
+            column and the featurization of the compounds in the remaining columns.
+            The featurization needs to be nummerical.
+                Example:    name    feature1     feature2
+                            A       23.1         54
+                            B       5.7          80
+        suggest_samples: Boolean
+            Option to suggest three initial samples after creating the reaction space. Default is True.
+        objectives: list or None
+            list of the objectives. E. g.: ["yield","ee"]
+            If None, an objective column with the name 'yield' will be added by default.
+        draw_suggested_samples: Boolean
+            Option to draw the suggested initial samples. Default is True.
+        feature_processing: Boolean
+            Option to preprocess the features. Default is True.
+        directory: string
+            set the working directory. Default is current directory.
+        filename: string
+            Filename of the output search space csv file. Default is reaction_space.csv
+        ------------------------------------------------------------------------        
+        Returns a dataframe df with all search space reaction combinations and prints the suggested random samples.
+        """
 
-        Function create_reaction_scope is in space_generator.py.
-        
-        Returns a dataframe df with all search space reaction combinations.
-        """
-        df = create_reaction_space(reactants=reactants, feature_processing=feature_processing, 
+        # create the search space. The function create_reaction_scope is in space_generator.py.
+        # only save the data if suggest_samples is False to avoid double saving
+        save_data = True
+        if suggest_samples:
+            save_data = False
+        df = create_reaction_space(reactants=reactants, feature_processing=feature_processing, save_data= save_data,
                                    directory=directory, filename=filename)
+        
+        # suggest initial samples if requested (random sampling)
+        if suggest_samples:
+            print("\nSuggesting initial scope entries by random sampling...")
+            if objectives is None:
+                msg = "No objective name was provided. An objective column with the name 'yield' will be added by default."
+                objectives = ['yield']
+                print(msg)
+
+            # suggesting random samples
+            wdir = Path(directory)
+            csv_filename = wdir.joinpath(filename)
+            df = ScopeBO()._init_sampling(df=df, batch=3, seed=42, sampling_method='random')
+            # sort by priority, add objectives, and  save
+            df.sort_values('priority', ascending=False, inplace=True)
+            print("Suggested samples are indicated by priority = 1.\n")
+            for objective in objectives:
+                df[objective] = ['PENDING'] * len(df)
+            # reorder columns to have the priority column at the end
+            df = df[[col for col in df.columns if col != 'priority'] + ['priority']]
+            df.to_csv(csv_filename, index=True, header=True)
+
+            if draw_suggested_samples:  # print the suggested samples if requested
+                draw_suggestions(df=df)      
+        # return the searchspace df
         return df
-    
+
 
     @staticmethod
-    def feature_analysis(filename, objectives =None, objective_mode = {"all_obj":"max"}, plot_type=["bar"],directory="."):
+    def feature_analysis(filename="reaction_space.csv", 
+                         objectives =None,
+                         objective_mode = {"all_obj":"max"},
+                         plot_type=["bar"],
+                         directory="."):
         """
         Analyzes the importance of features on the surrogate model using SHAP.
         ---------------------------------------------------------------------
@@ -335,14 +405,16 @@ class ScopeBO:
         -----------------------------------------------------------------------
         Inputs: 
             df: DataFrame 
-                Reaction space from generate_reaction_scope
+                Reaction space from create_reaction_scope
             batch: float
                 Number of experiments to suggest.
+            seed: int
+                random seed for reproducibility
             sampling_method: String
                 Selected sampling method.
-                Options:    random
+                Options:    random --> default
                             lhs (LatinHypercube)
-                            cvt (CVTSampling) --> Default
+                            cvt (CVTSampling)
             seed: int
                 random seed
         -----------------------------------------------------------------------
@@ -797,6 +869,7 @@ class ScopeBO:
                     cut_by_vendi = cut_by_vendi,
                     full_covariance_matrix=full_covariance_matrix,
                     df=df, seed = seed)
+                print(f"Cut {len(cut_by_vendi)} samples from the search space via Vendi pruning.")
                 
             elif pruning_metric.lower() == "variance":  # instead prune by variance (implemented for benchmarking purposes)
                 cumulative_test_x, cut_by_vendi, idx_test = variance_pruning(
@@ -814,6 +887,7 @@ class ScopeBO:
 
             # Loop through the number of batch samples in the batch.
             for batch_exp in range(batch):
+                print(f"Selecting sample {batch_exp+1} of {batch}...")
 
                 # Prune the search space via Vendi scoring if requested (this time for each sample (after the fantasies) not each batch).
                 if ((pruning_metric.lower()  == 'vendi_sample') and (Vendi_pruning_fraction != 0)):
@@ -825,6 +899,7 @@ class ScopeBO:
                         cut_by_vendi = cut_by_vendi,
                         full_covariance_matrix=full_covariance_matrix,
                         df=df, seed = seed)
+                    print(f"Cut {len(cut_by_vendi)} samples from the search space via Vendi pruning.")
 
                 # Instantiate some variables.
                 surrogate_model = None

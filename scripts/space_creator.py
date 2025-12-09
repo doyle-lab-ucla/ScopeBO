@@ -4,7 +4,11 @@ import numpy as np
 from itertools import product as it_product
 from pathlib import Path
 
-def create_reaction_space(reactants, feature_processing=True, directory='./', filename='reaction_space.csv'):
+def create_reaction_space(reactants,
+                          feature_processing=True,
+                          save_data = True,
+                          directory='./',
+                          filename='reaction_space.csv'):
 
     """
     Reaction scope generator
@@ -26,13 +30,12 @@ def create_reaction_space(reactants, feature_processing=True, directory='./', fi
             Example:    name    feature1     feature2
                         A       23.1         54
                         B       5.7          80
-
-    directory: string
-        set the working directory. Default is current directory.
-
     feature_processing: Boolean
         Option to preprocess the features. Default is True.
-
+    save_data: Boolean
+        Option to save the generated reaction space as a csv file. Default is True.
+    directory: string
+        set the working directory. Default is current directory.
     filename: string
         Filename of the output csv file. Default is reaction_space.csv
     """
@@ -101,11 +104,12 @@ def create_reaction_space(reactants, feature_processing=True, directory='./', fi
         print("Now doing feature preprocessing.")
         df_space = feature_preprocessing(df_space)
 
-    csv_filename = wdir.joinpath(filename)  # sets name of output
-    df_space.to_csv(csv_filename, index=True, mode = 'w', header=True)
-
     print("Generation of reaction space completed!")
-    print(f"The search space has been saved in the file '{filename}.'")
+
+    if save_data:
+        csv_filename = wdir.joinpath(filename)  # sets name of output
+        df_space.to_csv(csv_filename, index=True, mode = 'w', header=True)
+        print(f"The search space has been saved in the file '{filename}.'")
 
     return df_space
 
