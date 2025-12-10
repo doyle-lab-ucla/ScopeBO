@@ -146,6 +146,7 @@ def regression_modeling(filename, objective,
 
             # if there are more features left than the feature_cutoff, 
             # prune to the top [feature_cutoff] most important feature in a SHAP analysis
+            # note that the SHAP analysis is done on the inner train data only
             if len(features) > feature_cutoff:
                 features = _SHAP_pruning(X=X_train_inn, df_exp=df_exp, curr_feat=features,
                                         all_obj=all_obj, fname_shap=fname_shap, 
@@ -208,7 +209,7 @@ def regression_modeling(filename, objective,
         test_rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
         r2_test = _calculate_r2(y_test, y_test_pred)
         adj_r2_test = _calculate_adjusted_r2(r2_test,
-                                            len(y_train_out),
+                                            len(y_test),
                                             len(best_inn_model_feat))
 
         out_cv_models[tuple(best_inn_model_feat)].append((train_rmse, r2_train, adj_r2_train,
@@ -218,19 +219,19 @@ def regression_modeling(filename, objective,
     best_out_models = {k: tuple(np.mean(score) for score in zip(*v)) for 
                        k,v in out_cv_models.items()}
 
-    # pick the model that was picked most often
+    # pick the model features that were picked most often
     highest_counter = max(len(v) for v in out_cv_models.values())
     most_freq = [k for k,v in out_cv_models.items() if len(v) == highest_counter]
     champion_feat = None
-    if len(most_freq) == 1:
+    if len(most_freq) == 1:  # clear winner
         champion_feat = most_freq[0]
     else:  # test_rsme tie-breaker
-        rsme_vals = [best_out_models[mod][3] for mod in most_freq]  # test_rsme is 4th tuple entry
+        rsme_vals = [best_out_models[mod][3] for mod in most_freq]  # test_rsme is 4th tuple entry (0-indexed)
         top_idx = rsme_vals.index(min(rsme_vals))
         champion_feat = most_freq[top_idx]
     champion_feat = list(champion_feat)
 
-    # train model on the full data (using both scaled and natural features)
+    # train model on the full dataset using the champion features
     scaler = StandardScaler()
     X_sc = pd.DataFrame(scaler.fit_transform(X), 
                                 columns = X.columns)
@@ -279,7 +280,7 @@ def regression_modeling(filename, objective,
 def _SHAP_pruning(X, df_exp, curr_feat, all_obj, fname_shap, feat_cutoff, wdir):
     """
     Prune the number for feature to the most important features in a SHAP
-    analysis of the ScopeBO surrogate model (using on the inner train samples)
+    analysis of the ScopeBO surrogate model (using only the inner train samples)
     """
 
     # limit the experimental data to the inner train data 

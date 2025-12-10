@@ -4,13 +4,13 @@ import shutil
 from tqdm import tqdm
 
 from IPython.display import display
-import numpy as np
-import pandas as pd
 from morfeus.buried_volume import BuriedVolume
 from morfeus.conformer import ConformerEnsemble
 from morfeus.dispersion import Dispersion
 from morfeus.sasa import SASA
 from morfeus.xtb import XTB
+import numpy as np
+import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import rdFMCS, Draw
 
@@ -39,7 +39,7 @@ def calculate_morfeus_descriptors (smiles_list,
     chunk_size: int
         number of compounds that will be calculated in one chunk before saving the obtained data
         at the end of the run, all chunks will be concatenated.
-        Default: 25
+        Default: 10
     find_restart: Boolean
         If True, the  algorithm will parse if some chunks were already calculated and auto-restart 
         with the next chunk, overwriting the starting_smiles_nr and chunk_label variables.
@@ -48,7 +48,7 @@ def calculate_morfeus_descriptors (smiles_list,
         first entry of the smiles list to be calculated
         Default: 1
         (useful for restarting in case the calculation crashes)
-        NOTE: overwriting if find_restart = True
+        NOTE: overwritten if find_restart = True
     chunk_label: int
         label for the next chunk to be calculated
         Default: 1
@@ -67,14 +67,21 @@ def calculate_morfeus_descriptors (smiles_list,
     if not os.path.exists("./featurization_temp"):
         # Create the folder
         os.makedirs("./featurization_temp")
+
+    # Create a template for the common core with consistent atom ordering
     template = None
     if common_core is None:
+        # find the maximum common substructure if no common core is provided
         template = _get_mcs_template_with_consistent_atom_order(smiles_list)
     else:
+        # use the provided common core
         template = _map_common_core_with_consistent_atom_order(smiles_list,common_core)
+
+    # draw the template
     print("Atom properties will be calculated for the following common substructure:")
     depiction = Draw.MolToImage(template)
     display(depiction)
+
     pt = Chem.GetPeriodicTable()
 
     results = []
@@ -89,7 +96,7 @@ def calculate_morfeus_descriptors (smiles_list,
         chunk_folder = "./featurization_temp"
         if not os.listdir(chunk_folder):
             last_chunk = 0  # no chunks run yet
-        else:
+        else: # some chunks already exist
             # check which chunk was run last
             pattern = re.compile(r"feat_chunk_(\d+)\.csv$")
             for fname in os.listdir(chunk_folder):
@@ -103,32 +110,37 @@ def calculate_morfeus_descriptors (smiles_list,
         chunk_label = last_chunk + 1
         starting_smiles_nr = last_chunk * chunk_size +1
 
-    # go through the requested smiles
+    # go through the provided smiles
     for smiles_index, smiles in enumerate(tqdm(smiles_list[(starting_smiles_nr-1):])):
         smiles_index = smiles_index + starting_smiles_nr -1
         current_results = {}
+
         # Generate conformer ensemble
         ce = ConformerEnsemble.from_rdkit(smiles,optimize="MMFF94")
         ce.prune_rmsd()
         ce.sort()
         if len(ce) > 5:
             ce = ce[:5]  # prune to top 5 conformers 
+        
         # Optimize conformers
         model = {"method": "GFN2-xTB"}
         ce.optimize_qc_engine(program="xtb",model=model,procedure="geometric")
         ce.sp_qc_engine(program="xtb",model=model)
         ce.prune_energy()
+
         # Get the matching substructure (excluding hydrogens)
         match = ce.mol.GetSubstructMatch(template)
         substruct_atoms = [pt.GetElementSymbol(int(ce.elements[nr])) for nr in match]
         substruct_labels = _append_occurrence_numbers(substruct_atoms)
 
+        # calculate properties for each conformer
         for conformer in ce:
             props = conformer.properties
             sasa = SASA(ce.elements, conformer.coordinates)
             disp = Dispersion(ce.elements, conformer.coordinates)
             xtb = XTB(ce.elements, conformer.coordinates)
 
+            # save the global property values
             props["SASA"] = sasa.area
             props["Volume"] = disp.volume
             props["HOMO"] = xtb.get_homo()
@@ -137,6 +149,7 @@ def calculate_morfeus_descriptors (smiles_list,
             props["EA"] = xtb.get_ea(corrected=True)
             props["Dipole"] = np.linalg.norm(xtb.get_dipole())
 
+            # calculate atom properties
             sasa_atom_areas = sasa.atom_areas
             disp_atom_p_int = disp.atom_p_int
             charges = xtb.get_charges()
@@ -144,6 +157,7 @@ def calculate_morfeus_descriptors (smiles_list,
             nucleophilicity = xtb.get_fukui("nucleophilicity")
             radical_fukui = xtb.get_fukui("radical")
 
+            # save the atom properties
             for i,idx in enumerate(match):
                 atom_label = substruct_labels[i]
                 bv = BuriedVolume(ce.elements, conformer.coordinates, idx+1)
@@ -154,9 +168,12 @@ def calculate_morfeus_descriptors (smiles_list,
                 props[f"{atom_label}_electrophilicity"] = electrophilicity[idx+1]
                 props[f"{atom_label}_nucleophilicity"] = nucleophilicity[idx+1]
                 props[f"{atom_label}_radicalFukui"] = radical_fukui[idx+1]
+
+            # collect the property names during the first iteration
             if smiles == smiles_list[(starting_smiles_nr-1)] and conformer == ce[0]:
                 properties = props.keys()
 
+        # calculate Boltzmann-weighted average for each property
         for property in properties:
             current_results[property] = ce.boltzmann_statistic(property)
         results.append(current_results)
@@ -164,7 +181,10 @@ def calculate_morfeus_descriptors (smiles_list,
         smiles_list_chunk.append(smiles)  # add the smiles to the list of smiles in this chunk
 
         if (smiles_index + 1) % chunk_size == 0:  # check if the chunk is full; +1 due to zero-indexing
-            pd.DataFrame(results,index=smiles_list_chunk,columns=properties).to_csv(f"./featurization_temp/feat_chunk_{chunk_label}.csv",index=True,header=True)
+            # save the current chunk
+            pd.DataFrame(results,index=smiles_list_chunk,columns=properties).to_csv(f"./featurization_temp/feat_chunk_{chunk_label}.csv",
+                                                                                    index=True, header=True)
+            
             # clean out the collection variables for the next chunk
             results = []
             smiles_list_chunk = []
@@ -198,6 +218,10 @@ def _append_occurrence_numbers(strings):
 
 
 def _generate_template(ref_mol,core_mol):
+    """
+    Generate a template mol with consistent atom ordering 
+    based on a reference molecule and a common core.
+    """
 
     match = ref_mol.GetSubstructMatch(core_mol)
 
@@ -228,6 +252,8 @@ def _generate_template(ref_mol,core_mol):
 
 
 def _get_mcs_template_with_consistent_atom_order(smiles_list):
+    """Generate a template mol with consistent atom ordering based on the MCS of a list of smiles strings."""
+
     # Convert SMILES to H-added mols
     mols = [Chem.AddHs(Chem.MolFromSmiles(smi)) for smi in smiles_list]
 
@@ -241,6 +267,7 @@ def _get_mcs_template_with_consistent_atom_order(smiles_list):
 
 
 def _map_common_core_with_consistent_atom_order(smiles_list,common_core):
+    """Generate a template mol with consistent atom ordering based on a provided common core and a list of smiles strings."""
     # generate mol objects for smiles_list
     mols = [Chem.AddHs(Chem.MolFromSmiles(smiles)) for smiles in smiles_list]
 

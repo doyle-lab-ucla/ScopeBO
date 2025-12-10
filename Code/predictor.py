@@ -19,7 +19,7 @@ import torch
 
 from .mlr_modeling import regression_modeling
 from .model import build_and_optimize_model
-from .space_creator import create_reaction_space
+from .space_creator import create_search_space
 from .utils import EDBOStandardScaler, calculate_vendi_score, obtain_full_covar_matrix, vendi_pruning, variance_pruning, SHAP_analysis, draw_suggestions
 from .acquisition import greedy_run, explorative_run, random_run, low_variance_selection, hypervolume_improvement
 from .featurization import calculate_morfeus_descriptors
@@ -74,7 +74,7 @@ class ScopeBO:
             smiles_list: list
                 list of smiles strings
             common_core: str or None
-                smarts for the common core of interest
+                SMARTS for the common core of interest
                 Default is None --> will look for the largest common substructure in the molecule
             filename: str
                 path for the generated dataset
@@ -85,8 +85,8 @@ class ScopeBO:
                 maximum common substructure.
             chunk_size: int
                 number of compounds that will be calculated in one chunk before saving the obtained data
-                at the end of the run, all chunks will be concatenated.
-                Default: 25
+                At the end of the run, all chunks will be concatenated.
+                Default: 10
             find_restart: Boolean
                 If True, the  algorithm will parse if some chunks were already calculated and auto-restart 
                 with the next chunk, overwriting the starting_smiles_nr and chunk_label variables.
@@ -94,7 +94,7 @@ class ScopeBO:
                 first entry of the smiles list to be calculated
                 Default: 1
                 (useful for restarting in case the calculation crashes)
-                NOTE: overwriting if find_restart = True
+                NOTE: overwritten if find_restart = True
             chunk_label: int (one-indexed)
                 label for the next chunk to be calculated
                 Default: 1
@@ -164,7 +164,7 @@ class ScopeBO:
         save_data = True
         if suggest_samples:
             save_data = False
-        df = create_reaction_space(reactants=reactants, feature_processing=feature_processing, save_data= save_data,
+        df = create_search_space(reactants=reactants, feature_processing=feature_processing, save_data= save_data,
                                    directory=directory, filename=filename)
         
         # suggest initial samples if requested (random sampling)
@@ -204,10 +204,12 @@ class ScopeBO:
         Analyzes the importance of features on the surrogate model using SHAP.
         ---------------------------------------------------------------------
         Inputs:
-            objectives: list
-                list of the objectives. E. g.: [yield,ee]
             filename: str
                 filename of the reaction space csv file including experimental outcomes
+            objectives: list
+                list of the objectives. E. g.: [yield,ee]
+                If None, they are automatically inferred from columns containing
+                "PENDING" strings as values.
             objective_mode: dict
                 Dictionary of objective modes for objectives
                 Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
@@ -225,7 +227,7 @@ class ScopeBO:
         Returns the shap.explainer object, mean absolute SHAP values, and the requested plot of SHAP values.
         """
 
-        # Call the function from the utils file
+        # Call the function from the utils.py file
         shap_values, mean_abs_shap_values = SHAP_analysis(
             objectives=objectives,
             objective_mode=objective_mode,
@@ -332,9 +334,9 @@ class ScopeBO:
             (max, min) values to manually set the colorbar range for `obj_to_show`.
             If None, the min/max are taken from the observed evaluated samples.
         objectives : list-like, optional
-            List of column names containing objective values (including "PENDING").
+            List of column names containing objective values.
             If None, they are automatically inferred from columns containing
-            "PENDING" strings.
+            "PENDING" strings as values.
         display_cut_samples : bool, default=True
             Whether cut samples (priority = -1) are shown as X markers.
             If False, they are plotted as unseen points.
@@ -353,10 +355,12 @@ class ScopeBO:
                 - seen     (evaluated samples)
                 - neutral  (unseen priority = 0)
                 - cut      (unseen priority = -1)
+                samples.
         directory : str or Path, default="."
             Directory containing the CSV file.
         """
 
+        # Call the function from visualize.py
         df_dict = UMAP_view(filename=filename, obj_to_show=obj_to_show, obj_bounds=obj_bounds,
                             objectives=objectives, display_cut_samples=display_cut_samples,
                             figsize=figsize, dpi=dpi, show_figure=show_figure, cbar_title=cbar_title,
@@ -375,6 +379,8 @@ class ScopeBO:
         Input:
             objectives: list
                 list containing the objective names as string values
+                If None, they are automatically inferred from columns containing
+                "PENDING" strings as values.
             directory: str
                 working directory
                 Default: '.' (current directory)           
@@ -394,7 +400,8 @@ class ScopeBO:
         # Sort the df by index to ensure compatibility with the covariance matrix values.
         sorted_df = df.sort_index()
 
-        #get the indices of all datapoints that were evaluated so far. Samples that have not been measured will have "PENDING" as the entry in the objective column and will be ignored.
+        #get the indices of all datapoints that were evaluated so far. 
+        # Samples that have not been measured will have "PENDING" as the entry in the objective column and will be ignored.
         idx_target = (sorted_df[~sorted_df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
         # Convert the indices to numeric indices.
         idx_num = [sorted_df.index.get_loc(idx) for idx in idx_target]

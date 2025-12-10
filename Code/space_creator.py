@@ -1,10 +1,12 @@
-import os
-import pandas as pd
-import numpy as np
 from itertools import product as it_product
+import os
 from pathlib import Path
 
-def create_reaction_space(reactants,
+import numpy as np
+import pandas as pd
+
+
+def create_search_space(reactants,
                           feature_processing=True,
                           save_data = True,
                           directory='./',
@@ -42,14 +44,14 @@ def create_reaction_space(reactants,
     
     # Set working directory.
     wdir = Path(directory)
-    # Assert that the type of reactants fits the requirements.
+
+    # Assert that the type of the reactant variable fits the requirements.
     msg="Please provide the reactants as a list or dictionary of filenames and submit again."
     assert type(reactants) == list or type(reactants) == dict, msg
 
     list_of_dfs = []
-    i = 0
     # Generate DataFrames for each component and add them to list_of_dfs.
-    for component in reactants:
+    for i,component in enumerate(reactants):
         csv_component = wdir.joinpath(component)
 
         # Assertions for existence and type of file.
@@ -74,8 +76,6 @@ def create_reaction_space(reactants,
         df_component_i.columns = column_names
         # Add DataFrame to list.
         list_of_dfs.append(df_component_i)
-        # Increase running variable for the component labelling.
-        i += 1
 
     #Generate combinations of reactants for the reaction space.
     combinations = list(it_product(*(df.itertuples(index=False) for df in list_of_dfs)))
@@ -113,9 +113,11 @@ def create_reaction_space(reactants,
 
     return df_space
 
+
 def feature_preprocessing(df):
     """
-    Function for removing non-varied and highly correlated features.
+    Function for removing non-varied (one unique value) 
+    and highly correlated features (Pearson correlation ≥0.95).
     Take a df as input and returns it in processed form.
     """
     # Remove columns that have only one unique value.

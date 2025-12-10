@@ -27,6 +27,7 @@ def explorative_run(surrogate_model, q, objective_weights,idx_test, test_x_torch
     Returns the indices of the selected samples, their data, and their list position in the test data lists.
     """
 
+    # get the variance of the test samples from the surrogate model
     variance = surrogate_model.posterior(test_x_torch).variance
 
     # scalarization in case of multi-objective optimization
@@ -35,7 +36,7 @@ def explorative_run(surrogate_model, q, objective_weights,idx_test, test_x_torch
         if objective_weights is not None:
             objective_weights = torch.tensor(objective_weights).to(**tkwargs).double()
             variance = (variance * objective_weights).sum(dim=-1)
-        else:
+        else:  # average if no weights are provided
             variance = variance.mean(dim=-1)
 
     # convert to numpy array
@@ -71,6 +72,7 @@ def explorative_run(surrogate_model, q, objective_weights,idx_test, test_x_torch
 def greedy_run(surrogate_model, q, objective_weights, idx_test, test_x_torch):
     """
     Fully exploitative acqusition function.
+    If used for multi-objective optimization, the objectives are scalarized using provided weights or by averaging.
     Input:
         surrogate_model: surrogate model object
             The surrogate model to be used.
@@ -88,7 +90,7 @@ def greedy_run(surrogate_model, q, objective_weights, idx_test, test_x_torch):
 
     tkwargs = {"dtype": torch.double, "device": torch.device("cpu")}
 
-    # get the surrogate means
+    # get the surrogate means for the test samples
     means = surrogate_model.posterior(test_x_torch).mean
 
     # scalarization in case of multi-objective optimization
@@ -97,7 +99,7 @@ def greedy_run(surrogate_model, q, objective_weights, idx_test, test_x_torch):
         if objective_weights is not None:
             objective_weights = torch.tensor(objective_weights).to(**tkwargs).double()
             means = (means * objective_weights).sum(dim=-1)
-        else:
+        else:  # average if no weights are provided
             means = means.mean(dim=-1)
 
     # convert to numpy array
@@ -133,7 +135,21 @@ def greedy_run(surrogate_model, q, objective_weights, idx_test, test_x_torch):
 def hypervolume_improvement(surrogate_model, q, objective_weights, cumulative_train_y, idx_test, test_x_torch):
     """
     Multiobjective greedy acquisition function. Exploit the improvement of the current hypervolume.
-    # NOTE: finish docstring.
+    Input:
+        surrogate_model: surrogate model object
+            The surrogate model to be used.
+        q: int
+            batch size
+        objective_weights: list of float
+            list with weights for the objectives in the scalarization (only multi-obj. opt.)
+        cumulative_train_y: np.array
+            array of the training data labels
+        idx_test: list
+            list of test indices
+        test_x_torch: tensor
+            torch tensor of the test data features
+
+    Returns the indices of the selected samples, their data, and their list position in the test data lists.
     """
      
     tkwargs = {"dtype": torch.double, "device": torch.device("cpu")}
@@ -142,8 +158,7 @@ def hypervolume_improvement(surrogate_model, q, objective_weights, cumulative_tr
     ref_mins = np.min(cumulative_train_y, axis=0)
     ref_point = torch.tensor(ref_mins).double().to(**tkwargs)
 
-
-    # Get the surrogate means.
+    # Get the surrogate means for the test samples
     means = surrogate_model.posterior(test_x_torch).mean
     
     # Get the current Pareto front
@@ -160,9 +175,7 @@ def hypervolume_improvement(surrogate_model, q, objective_weights, cumulative_tr
     # Calculate the hypervolume of the current Pareto front.
     hv = Hypervolume(ref_point=ref_point)  # initialize hypervolume object.
     initial_hv = hv.compute(pareto_y)  # calculate hypervolume
-    print(f"initial_hv: {initial_hv}")
-
-
+    
     # Calculate the improvement of the hypervolume for each test set point
     hv_improvements = []
     for i in range(means.shape[0]):  # loop through all test set samples
@@ -182,10 +195,9 @@ def hypervolume_improvement(surrogate_model, q, objective_weights, cumulative_tr
     samples = [test_x_list[position] for position in list_positions_samples]
     best_samples= [idx_test[position] for position in list_positions_samples]
 
-
     # use the greedy acq fct to calculate the remaining samples in case that
     # less samples than requested improved the hypervolume
-    # this acq fct uses simple scalarization of the objectives
+    # this acq fct uses simple scalarization of the objectives instead of hypervolume improvement
     remaining_q = q - len(list_positions_samples)
     if remaining_q != 0:
         # remove the just selected samples from idx_test and test_x_torch to avoid duplicate selections
@@ -215,6 +227,8 @@ def random_run(q, idx_test, seed):
             batch size
         idx_test: list
             list of test indices
+        seed: int
+            random seed for reproducibility
         
     Returns the indices of the selected samples and their list position in the test data lists.
     """
@@ -235,8 +249,22 @@ def random_run(q, idx_test, seed):
 
 def low_variance_selection(batch, idx_test, cumulative_test_x, cumulative_train_x, cumulative_train_y):
     """
-    Acqusition function using selection of the points with the lowest variance for benchmarking purposes (no batch fantasy). Only works for single objectives.
-    NOTE: Complete docstring.
+    Acqusition function using selection of the points with the lowest variance for benchmarking purposes (no batch fantasy). 
+    Only works for single objectives.
+
+    Returns the indices of the selected samples.
+
+    Input:
+        batch: int
+            batch size
+        idx_test: list
+            list of test indices
+        cumulative_test_x: np.array
+            array of the test data features
+        cumulative_train_x: np.array
+            array of the training data features
+        cumulative_train_y: np.array
+            array of the training data labels
     """
 
     tkwargs = {
@@ -255,10 +283,11 @@ def low_variance_selection(batch, idx_test, cumulative_test_x, cumulative_train_
     surrogate_model = SingleTaskGP(train_X=train_x_torch, train_Y=train_y_torch,
                         covar_module=gp.covar_module, likelihood=likelihood)
     
-    # delete variables that are not required anymore
+    # delete variables that are not required anymore to save memory
     del gp
     del likelihood
 
+    # get the variance of the test samples from the surrogate model
     variance = surrogate_model.posterior(test_x_torch).variance.detach().numpy()
 
     # sort the posterior variance
@@ -267,7 +296,6 @@ def low_variance_selection(batch, idx_test, cumulative_test_x, cumulative_train_
 
     # only keep the lowest scores (= batch size)
     selected_variance = sorted_variance[:batch]
-
 
     # determine the list indices that belong to these variance scores
     position = None

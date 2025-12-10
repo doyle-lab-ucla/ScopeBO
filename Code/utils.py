@@ -15,15 +15,14 @@ from vendi_score import vendi
 
 from .model import get_covar_matrix, build_and_optimize_model
 
-# NOTE: add SHAP imports.
 
-
-def obtain_full_covar_matrix(objectives,directory, filename):
-    
+def obtain_full_covar_matrix(objectives, directory, filename):
     """
     Calculate the covariance matrix for the full dataset.
 
     Inputs:
+        objectives: list
+            list of the objectives. E. g.: ["yield","ee"]
         directory: str
             working directory
         filename: str
@@ -42,7 +41,7 @@ def obtain_full_covar_matrix(objectives,directory, filename):
     if type(objectives) != list:
         objectives = [objectives]       
 
-    # 2. Load reaction space from scope csv file and remove columns without any values.
+    # Load reaction space from scope csv file and remove columns without any values.
     df = pd.read_csv(f"{csv_filename}",index_col=0,header=0, float_precision = "round_trip")
     df = df.dropna(axis='columns', how='all')
    
@@ -63,8 +62,8 @@ def obtain_full_covar_matrix(objectives,directory, filename):
     df_torch = torch.tensor(df_np.tolist()).to(**tkwargs).double()
     
     # Calculate the covariance matrix of the prior for the full data and normalize it.
-    # The covariance matrix needs to be normalized so that that the similarity values k for all entries x are k(x,x) = 1. This is a requirement for the vendi score calculation.
-
+    # The covariance matrix needs to be normalized so that that the similarity values k for all entries x are k(x,x) = 1. 
+    # This is a requirement for the vendi score calculation.
     covariance_matrix = pd.DataFrame(get_covar_matrix(df_torch).numpy())  # Calculate matrix object and convert it to df
     cov_min = covariance_matrix.min().min()
     cov_max = covariance_matrix.max().max()
@@ -77,7 +76,7 @@ def calculate_vendi_score(idx_num, covariance_matrix):
 
     """
     Calculates the Vendi score for all samples that have been evaluated so far (= training data).
-    To do this, the covariance matrix of the surrogate model prior is used to calculate the vendi score.
+    To do this, the covariance matrix of the surrogate model prior is used as the similarity matrix.
     ------------------------------------------------------------------------------
     Input:
         idx_num: list
@@ -95,20 +94,18 @@ def calculate_vendi_score(idx_num, covariance_matrix):
     return current_vendi_score
 
 
-def vendi_pruning(idx_test,idx_train,Vendi_pruning_fraction,cumulative_test_x,
-                  cut_by_vendi,full_covariance_matrix,df,seed):
+def vendi_pruning(idx_test, idx_train, Vendi_pruning_fraction, cumulative_test_x,
+                  cut_by_vendi, full_covariance_matrix, df, seed):
      
     """
-    Prunes the test set based on the provided Vendi_threshold.
+    Prunes a percentage of the test samples from consideration based on the Vendi scores
+    that they have when added to the training samples. Lower Vendi scores indicate lower diversity.
     -----------------------------------------------------------------
     Inputs:
         idx_test: list
             list of indices of the test set in the Dataframe df
         idx_train: list
             list of indices of the training data in the DataFrame df
-        scaler_x: scaler object
-        df: DataFrame
-            contains the featurized full dataset (no objective values)
         Vendi_pruning_fraction: float
             percentage to which the test set will be pruned by the Vendi scoring
         cumulative_test_x: list
@@ -116,23 +113,27 @@ def vendi_pruning(idx_test,idx_train,Vendi_pruning_fraction,cumulative_test_x,
         cut_by_vendi: list
             list containing the indices of previously cut samples.
         full_covariance_matrix: df
-            covariance matrix for the dataset
+            covariance matrix for the full dataset
         df: df
             dataframe for the dataset
+        seed: int
+            random seed for reproducibility
     ------------------------------------------------------------------
     Returns the modified variables idx_test and cumulative_test_x as well as the list
     of the indices of the pruned samples (cut_by_vendi).
     """
+
     random.seed(seed)
+
     # Sort the df for consistent indexing for the covariance matrix.
     sorted_df = df.sort_index()
 
-    # Calculate the Vendi score.
+    # Calculate the Vendi scores.
     vendi_scores = []
     for ind in idx_test:
         idx_combination = np.concatenate((idx_train,np.array([ind])),axis=0)  # indices of training data + point to be evaluated
-        idx_combination = [sorted_df.index.get_loc(idx) for idx in idx_combination]  # convert to numeric indices
-        current_score = calculate_vendi_score(idx_num=idx_combination, covariance_matrix=full_covariance_matrix) # calculate Vendi score
+        idx_comb_num = [sorted_df.index.get_loc(idx) for idx in idx_combination]  # convert to numeric indices
+        current_score = calculate_vendi_score(idx_num=idx_comb_num, covariance_matrix=full_covariance_matrix) # calculate Vendi score
         vendi_scores.append(current_score)
 
     # Prune the reaction space based on Vendi score. Pruned samples are saved.
@@ -184,26 +185,23 @@ def variance_pruning(idx_test,n_objectives,Vendi_pruning_fraction,cumulative_tes
      
     """
     Prunes the test set based on the provided Vendi_threshold.
+    Only impolemented for benchmarking purposes and single objective optimization.
     -----------------------------------------------------------------
-    NOTE: update docstring
     Inputs:
         idx_test: list
             list of indices of the test set in the Dataframe df
-        idx_train: list
-            list of indices of the training data in the DataFrame df
-        scaler_x: scaler object
-        df: DataFrame
-            contains the featurized full dataset (no objective values)
-        Vendi_threshold: float
+        n_objectives: int
+            number of objectives
+        Vendi_pruning_fraction: int
             percentage to which the test set will be pruned by the Vendi scoring
         cumulative_test_x: list
             list containing the scaled test data
+        cumulative_train_x: list
+            list containing the scaled training data
+        cumulative_train_y: list
+            list containing the scaled training outputs
         cut_by_vendi: list
             list containing the indices of previously cut samples.
-        full_covariance_matrix: df
-            covariance matrix for the dataset
-        df: df
-            dataframe for the dataset
     ------------------------------------------------------------------
     Returns the modified variables idx_test and cumulative_test_x as well as the list
     of the indices of the pruned samples (cut_by_vendi).
@@ -304,9 +302,9 @@ def SHAP_analysis(filename,
     Inputs:
         filename: str
             filename of the reaction space csv file including experimental outcomes
-        objectives: list
+        objectives: list or None
             list of the objectives. E. g.: [yield,ee]
-            if None: will try to infer the objectives by looking for columns with the value "PENDING"
+            If None (default): will try to infer the objectives by looking for columns with the value "PENDING"
         objective_mode: dict
             Dictionary of objective modes for objectives
             Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
@@ -319,9 +317,9 @@ def SHAP_analysis(filename,
                 both options can be requested by using plot_type = ["bar","beeswarm"]
         directory: str
             Define working directory. Default is current directory.
-
     ---------------------------------------------------------------------
-    Returns the shap.explainer object, mean absolute SHAP values, and the requested plot of SHAP values.
+    Returns the shap.explainer object, mean absolute SHAP values,
+    and prints the requested plot of the SHAP values.
     """
 
     tkwargs = {
@@ -329,6 +327,7 @@ def SHAP_analysis(filename,
     "device": torch.device("cpu"),
     }
 
+     # Load the data
     wdir = Path(directory)
     df = pd.read_csv(wdir.joinpath(filename),index_col=0,header=0, float_precision = "round_trip")
 
@@ -405,12 +404,14 @@ def SHAP_analysis(filename,
             # Get the mean prediction from the model's posterior distribution
             return surrogate_model.posterior(X_tensor).mean.detach().numpy()
 
+    # Create the SHAP explainer and calculate SHAP values.
     explainer = shap.Explainer(predict_fn,df_train_x_scaled)
     max_evals = 500
     if len(df_train_x_scaled.columns) > 249:
         max_evals = 2 * len(df_train_x_scaled.columns) + 1 
     shap_values = explainer(df_train_x_scaled, max_evals=max_evals)
 
+    # Process the SHAP values to get mean absolute SHAP values for each feature.
     df_shap = pd.DataFrame(shap_values.values,columns=header)
     df_shap = df_shap.applymap(lambda x: abs(x))
     mean_abs_shap_values = df_shap.mean()
@@ -426,7 +427,8 @@ def SHAP_analysis(filename,
 
 def draw_suggestions(df):
     """
-    Extracts the suggested samples and draws them.
+    Extracts the suggested samples (priority = 1) as well as alternative suggestions (0 < priority < 1)
+    and draws their structure.
 
     df: DataFrame
         DataFrame containing a priority list of suggested molecules
@@ -481,7 +483,7 @@ def draw_suggestions(df):
 
 class EDBOStandardScaler:
     """
-    Custom standard scaler for EDBO.
+    Custom standard scaler taken over from EDBO.
     """
     def __init__(self):
         pass

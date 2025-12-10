@@ -1,10 +1,4 @@
-import ast
-import colorsys
-import os
 from pathlib import Path
-import re
-from statistics import stdev
-import sys
 
 from IPython.display import display
 from matplotlib.colors import LinearSegmentedColormap
@@ -12,10 +6,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import Draw
-from rdkit.Chem import AllChem
 from sklearn.preprocessing import scale
 from umap import UMAP
-
 
 # General plt parameters
 plt.rcParams.update({
@@ -33,6 +25,7 @@ plt.rcParams.update({
 doyle_colors = ["#CE4C6F", "#1561C2", "#188F9D","#C4ADA2","#515798", "#CB7D85", "#A9A9A9"]
 colors = [doyle_colors[1],"#FFFFFFD1",doyle_colors[0]]
 cont_cmap = LinearSegmentedColormap.from_list("Doyle_cont", colors)
+
 
 def UMAP_view(filename,
               obj_to_show = None,
@@ -52,43 +45,33 @@ def UMAP_view(filename,
     filename : str or Path
         Path to the CSV file containing the reaction search space.
     obj_to_show : str or None
-    Name of the objective that is visualized.
-    If None (Default), the first listed objective is used.
-
+        Name of the objective that is visualized.
+        If None (Default), the first listed objective is used.
     obj_bounds : tuple or list, optional
         (max, min) values to manually set the colorbar range for `obj_to_show`.
         If None, the min/max are taken from the observed evaluated samples.
-
     objectives : list-like, optional
         List of column names containing objective values (including "PENDING").
         If None, they are automatically inferred from columns containing
         "PENDING" strings.
-
     display_cut_samples : bool, default=True
         Whether cut samples (priority = -1) are shown as X markers.
         If False, they are plotted as unseen points.
-
     figsize : tuple, default=(10, 8)
         Size of the generated UMAP figure in inches.
-
     dpi : int, default=600
         Resolution of the output figure.
-
     draw_structures : bool, default=True
         Draw the structures of the evaluated samples. Requires SMILES strings as index in the CSV file.
-
     show_figure : bool, default=True
         Whether to display the UMAP plot.
-
     cbar_title : str, optional
         Custom title for the colorbar. If None, uses the objective name.
-
     return_dfs : bool, default=False
         If True, returns a dictionary of DataFrames for:
             - seen     (evaluated samples)
             - neutral  (unseen priority = 0)
             - cut      (unseen priority = -1)
-
     directory : str or Path, default="."
         Directory containing the CSV file.
     """
@@ -107,7 +90,6 @@ def UMAP_view(filename,
     # show the first objective in the UMAP if none has been specified in the function input
     if obj_to_show is None:
         obj_to_show = objectives[0]
-
     
     # scale the featurization data
     df_scaled = df_scope.copy(deep=True)
@@ -160,6 +142,7 @@ def UMAP_view(filename,
         except:
             print(f"Could not draw the molecules in {scope_substrates}.")
             print(f"Please label your molecules with SMILES strings to draw the results of the scope.")
+            print("Alternatively, set draw_structures = False in the function call to avoid structure drawing.")
 
     # print the UMAP if requested
     if show_figure:

@@ -12,7 +12,7 @@ tkwargs = {
 }
 
 def build_and_optimize_model(train_x, train_y):
-    """ Builds model and optimizes it."""
+    """ Builds surrogate model and optimizes it."""
 
     gp_options = {
         'ls_prior1': 2.0, 'ls_prior2': 0.2, 'ls_prior3': 5.0,
