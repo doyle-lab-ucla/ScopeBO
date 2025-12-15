@@ -1,11 +1,25 @@
-1. Install anaconda (preferably via miniconda3) if you do not have it.
+1. Install Anaconda or Miniconda: https://www.anaconda.com/download/success
 
-2. Open a terminal window.
+2. Download the ScopeBo repository from GitHub:
+• Link: https://github.com/doyle-lab-ucla/ScopeBO
+• Click on the green "Code" button, download as a zip folder, and unzip in the desired folder (or clone the repository).
+• Note: The folder "Data" only contains results from our publication. If you simply want to run ScopeBO, you can delete this folder to save some disk space (ca. 0.5 GB).
 
-3. Navigate to the folder containing this file.
+3. Open the terminal application in the ScopeBO folder (containing this file)
+• Mac: Right-click on the folder in Finder and select “New terminal at folder”.
+• Windows: Navigate into the folder in the file explorer. Click the address bar at the top. Type “cmd” and press enter.
 
-4. Install the environment by running: conda env create -f environment.yml
+4. Run the following command in the terminal to install the environment:
+          conda env create -f environment.yml
 
-5. Activate the environment using: conda activate scope_bo
+5. Activate the environment by running the following command in the terminal:
+          conda activate scope_bo
 
-6. Done!
+6. Run the following command in the terminal which should launch jupyter in your browser:
+          jupyter notebook
+
+7. Open the file “ScopeBO_example.ipynb” in the “Examples” folder to run ScopeBO.
+
+
+If you want to open ScopeBO after having installed it, you simply need to open your terminal in the ScopeBO folder and run the commands in steps 5–7.
+Alternatively, you can also use software like Visual Studio Code to run ScopeBO!
