@@ -43,7 +43,7 @@ jupyter notebook
 
 Open the file "ScopeBO_example.ipynb" in the folder "Examples" to see a usage example.
 
-See the supporting information of our publication for more detailed installation instructions.
+See the file "installation_instructions.txt" for more detailed instructions.
 
 ---
 
