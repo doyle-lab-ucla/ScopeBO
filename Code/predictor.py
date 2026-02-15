@@ -20,10 +20,10 @@ import torch
 from .mlr_modeling import regression_modeling
 from .model import build_and_optimize_model
 from .space_creator import create_search_space
-from .utils import EDBOStandardScaler, calculate_vendi_score, obtain_full_covar_matrix, vendi_pruning, variance_pruning, SHAP_analysis, draw_suggestions
+from .utils import EDBOStandardScaler, calculate_vendi_score, obtain_full_covar_matrix, vendi_pruning, variance_pruning, SHAP_analysis, draw_suggestions, exp_imp_calc
 from .acquisition import greedy_run, explorative_run, random_run, low_variance_selection, hypervolume_improvement
 from .featurization import calculate_morfeus_descriptors
-from .visualize import UMAP_view
+from .visualize import UMAP_suggestions, UMAP_predictions
 
 # torch settings
 tkwargs = {
@@ -42,6 +42,7 @@ class ScopeBO:
         - Visualizing the reaction space using UMAP (visualize function)
         - Calculating the Vendi score for evaluated samples (get_vendi_score function)
         - Running the ScopeBO optimization loop to suggest experiments (run function)
+        - Calculate expected (hypervolume) improvement for unseen scope substrates
     """
 
     def __init__(self):
@@ -247,6 +248,11 @@ class ScopeBO:
                         feature_cutoff = 20, corr_cutoff = 0.7,
                         fname_pred = "mlr_predictions.csv",
                         print_pred = True,
+                        visualize = True,
+                        obj_bounds = None,
+                        figsize = (10,8),
+                        dpi = 600,
+                        cbar_title = None,  
                         directory = "."):
         """
         Trains a multivariable linear regression model using a repeated, nested CV scheme 
@@ -294,6 +300,18 @@ class ScopeBO:
         print_pred: Boolean
             (Default = True)
             print the file with the predictions
+        visualize: Boolean
+            (Default = True)
+            visualize the predictions on a UMAP if True
+        obj_bounds : tuple or list, optional
+            (max, min) values to manually set the colorbar range in the plot.
+            If None, the min/max are taken from the observed evaluated samples.
+        figsize : tuple, default=(10, 8)
+            Size of the generated UMAP figure in inches.
+        dpi : int, default=600
+            Resolution of the output figure.
+        cbar_title : str, optional
+            Custom title for the colorbar. If None, uses the objective name.
         directory: str (Default = current directory)
             working directory
         --------------------
@@ -302,11 +320,26 @@ class ScopeBO:
         """
 
         # call the outsourced function (in mlr_modeling.py)
-        df_pred = regression_modeling(filename, objective, further_objectives, n_feat,
+        df_pred, model_settings = regression_modeling(filename, objective, further_objectives, n_feat,
                         repeats_outer, k_outer, repeats_inner, k_inner, fname_shap,
                         feature_cutoff, corr_cutoff, fname_pred, print_pred, directory)
         
-        return df_pred
+        # plot results on a UMAP if requested
+        if visualize:
+            if further_objectives is None:
+                further_objectives = []  # reassign to avoid dtype errors in UMAP_predictions call
+            UMAP_predictions(filename = filename,
+                      df_pred = df_pred,
+                      obj_to_show = objective,
+                      obj_bounds = obj_bounds,
+                      objectives = [objective] + further_objectives,
+                      figsize = figsize,
+                      dpi = dpi,
+                      cbar_title = cbar_title,
+                      directory = directory)
+        
+        return df_pred, model_settings
+
 
     @staticmethod
     def visualize(filename,
@@ -368,7 +401,7 @@ class ScopeBO:
         """
 
         # Call the function from visualize.py
-        df_dict = UMAP_view(filename=filename, obj_to_show=obj_to_show, obj_bounds=obj_bounds,
+        df_dict = UMAP_suggestions(filename=filename, obj_to_show=obj_to_show, obj_bounds=obj_bounds,
                             objectives=objectives, display_cut_samples=display_cut_samples,
                             display_suggestions=display_suggestions, display_alternatives=display_alternatives,
                             figsize=figsize, dpi=dpi, show_figure=show_figure, cbar_title=cbar_title,
@@ -1195,3 +1228,83 @@ class ScopeBO:
         priority_list = df["priority"]
 
         return priority_list
+    
+    @staticmethod
+    def expected_improvement(filename="reaction_space.csv",
+                             objectives = None,
+                             objective_mode = {"all_obj": "max"},
+                             results_filename = None,
+                             visualize = True,
+                             obj_to_show = None,
+                             obj_bounds = None,
+                             figsize = (10,8),
+                             dpi = 600,
+                             cbar_title = None,
+                             directory = "."):
+        """
+        Calculates the predicted mean, variance, and expected improvement for all test substrates
+        from a ScopeBO().run() output csv file.
+        Plots the results on a UMAP if requested
+        ---------------------------------------------------------------------
+        Inputs:
+            filename: str
+                filename of the reaction space csv file including experimental outcomes
+            objectives: list or None
+                list of the objectives. E. g.: [yield,ee]
+                If None (default): will try to infer the objectives by looking for columns with the value "PENDING"
+            objective_mode: dict
+                Dictionary of objective modes for objectives
+                Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
+                Code will assume maximization for all non-listed objectives
+                Default is {"all_obj":"max"} --> all objectives are maximized
+            results_filename: str or None (Default)
+                if provided, saves the results dataframe as a csv file under this name
+            visualize: Boolean (Default = True)
+                plot the predicted objective values if True
+                shows the substrates as points on a 2D UMAP with color corresponding to performance
+                experimental data is shown with squares (shown performance = experimental, not predicted)
+                test data is shown with circles; the size corresponds to the standard deviation
+            obj_to_show : str or None
+                Name of the objective that is visualized (if visualize == True)
+                If None (Default), the first listed objective is used.
+            obj_bounds : tuple or list, optional
+                (max, min) values to manually set the colorbar range for `obj_to_show`.
+                If None, the min/max are taken from the observed evaluated samples.
+            figsize : tuple, default=(10, 8)
+                Size of the generated UMAP figure in inches.
+            dpi : int, default=600
+                Resolution of the output figure.
+            cbar_title : str, optional
+                Custom title for the colorbar. If None, uses the objective name.
+            directory: str
+                Define working directory. Default is current directory.
+        ---------------------------------------------------------------------
+        Returns:
+        Dataframe with the compound name as index and the predicted mean, variance, and expected 
+        improvement as columns.
+        Also saves this data as a csv file if results_filename is not None.
+        """
+
+        # call the function that is in utils.py
+        df =  exp_imp_calc(filename=filename,
+                           objectives = objectives,
+                           objective_mode = objective_mode,
+                           directory = directory)
+        
+        # save file if requested
+        if results_filename is not None:
+            df.to_csv(results_filename, index=True, header=True)
+
+        # plot results on a UMAP if requested
+        if visualize:
+            UMAP_predictions(filename = filename,
+                      df_pred = df,
+                      obj_to_show = obj_to_show,
+                      obj_bounds = obj_bounds,
+                      objectives = objectives,
+                      figsize = figsize,
+                      dpi = dpi,
+                      cbar_title = cbar_title,
+                      directory = directory)
+
+        return df

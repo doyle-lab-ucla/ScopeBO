@@ -1,7 +1,12 @@
+import os
 from pathlib import Path
 import random
+import sys
 
+from botorch.acquisition.multi_objective.monte_carlo import qNoisyExpectedHypervolumeImprovement
+from botorch.acquisition.monte_carlo import qExpectedImprovement
 from botorch.models import SingleTaskGP, ModelListGP
+from botorch.sampling.samplers import SobolQMCNormalSampler
 from IPython.display import display
 import numpy as np
 import pandas as pd
@@ -327,70 +332,12 @@ def SHAP_analysis(filename,
     "device": torch.device("cpu"),
     }
 
-     # Load the data
-    wdir = Path(directory)
-    df = pd.read_csv(wdir.joinpath(filename),index_col=0,header=0, float_precision = "round_trip")
+    surrogate_model, df_train_x_scaled, _ = _surrogate_preparation(filename=filename,
+                                             objectives=objectives,
+                                             objective_mode=objective_mode,
+                                             directory=directory)
 
-    # identify the objectives (containing PENDING entries) if none are given
-    if objectives is None:
-        objectives = df.columns[df.eq("PENDING").any()].to_list()
-
-    # get the data with labels and convert it to the require datatype.
-    idx_train = (df[~df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
-
-    # prepare x and y data for BO model by removing objectives and priority columns for the BO model inputs
-    df_train_y = df.loc[idx_train][objectives]
-    if 'priority' in df.columns.to_list():
-        df = df.drop(columns=['priority'])
-    df = df.drop(columns=objectives)
-    df_train_x = df.loc[idx_train]
-    header = df_train_x.columns
-
-    # Scaling of training features and conversion to tensor.
-    scaler_x = MinMaxScaler()
-    scaler_x.fit(df_train_x.to_numpy())
-    train_x_np = scaler_x.transform(df_train_x.to_numpy())
-    train_x_torch = torch.tensor(train_x_np.tolist()).to(**tkwargs).double()
-    df_train_x_scaled = pd.DataFrame(train_x_np,columns=header)
-
-    # Scaling of training outputs. 
-    train_y_np = df_train_y.astype(float).to_numpy()
-    min_obj = [obj for obj, value in objective_mode.items() if value == "min"]
-    if min_obj:
-        for obj in min_obj:
-            i = objectives.index(obj)
-            train_y_np[:, i] = -train_y_np[:, i]
-
-    scaler_y = EDBOStandardScaler()
-    train_y_np = scaler_y.fit_transform(train_y_np)
-    cumulative_train_y = train_y_np.tolist()
-
-    # Create GP models for each objective.
-    n_objectives = len(objectives)
-    individual_models = []
-    for i in range(n_objectives):
-        
-        # Convert training outputs for the objective in question to tensors.
-        train_y_i = np.array(cumulative_train_y)[:, i]
-        train_y_i = (np.atleast_2d(train_y_i).reshape(len(train_y_i), -1))
-        train_y_i_torch = torch.tensor(train_y_i.tolist()).to(**tkwargs).double()
-
-        # Optimize GP model using function from model.py.
-        gp, likelihood = build_and_optimize_model(train_x=train_x_torch, train_y=train_y_i_torch)
-
-        # Creating a single task GP model for the objective and storing it in individual_models list.
-        model_i = SingleTaskGP(train_X=train_x_torch, train_Y=train_y_i_torch,
-                            covar_module=gp.covar_module, likelihood=likelihood)
-        individual_models.append(model_i)
-
-    # Define the surrogate model.
-    surrogate_model = None
-    if n_objectives > 1:
-        surrogate_model = ModelListGP(*individual_models)
-    else:
-        surrogate_model = individual_models[0]
-
-    def predict_fn(X):
+    def _predict_fn(X):
         """
         Creates a suitable input for a shap.Explainter from a gaussian procress surrogate model.
         ----------------------------------------------------------------------------------------
@@ -405,14 +352,14 @@ def SHAP_analysis(filename,
             return surrogate_model.posterior(X_tensor).mean.detach().numpy()
 
     # Create the SHAP explainer and calculate SHAP values.
-    explainer = shap.Explainer(predict_fn,df_train_x_scaled)
+    explainer = shap.Explainer(_predict_fn,df_train_x_scaled)
     max_evals = 500
     if len(df_train_x_scaled.columns) > 249:
         max_evals = 2 * len(df_train_x_scaled.columns) + 1 
     shap_values = explainer(df_train_x_scaled, max_evals=max_evals)
 
     # Process the SHAP values to get mean absolute SHAP values for each feature.
-    df_shap = pd.DataFrame(shap_values.values,columns=header)
+    df_shap = pd.DataFrame(shap_values.values,columns=df_train_x_scaled.columns)
     df_shap = df_shap.applymap(lambda x: abs(x))
     mean_abs_shap_values = df_shap.mean()
     mean_abs_shap_values.sort_values(ascending=False)
@@ -425,6 +372,119 @@ def SHAP_analysis(filename,
     return shap_values, mean_abs_shap_values.sort_values(ascending=False)
 
 
+def exp_imp_calc(filename="reaction_space.csv",
+                 objectives = None,
+                 objective_mode = {"all_obj": "max"},
+                 directory = "."):
+    """
+    Calculates the predicted mean, variance, and expected improvement for all test substrates
+    from a ScopeBO().run() output csv file.
+    ---------------------------------------------------------------------
+    Inputs:
+        filename: str
+            filename of the reaction space csv file including experimental outcomes
+        objectives: list or None
+            list of the objectives. E. g.: [yield,ee]
+            If None (default): will try to infer the objectives by looking for columns with the value "PENDING"
+        objective_mode: dict
+            Dictionary of objective modes for objectives
+            Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
+            Code will assume maximization for all non-listed objectives
+            Default is {"all_obj":"max"} --> all objectives are maximized
+        results_filename: str or None
+            if provided, saves the results dataframe as a csv file under this name
+        directory: str
+            Define working directory. Default is current directory.
+    ---------------------------------------------------------------------
+    Returns:
+    Dataframe with the compound name as index and the predicted mean, variance, and expected 
+    improvement as columns.
+    Also saves this data as a csv file if results_filename is not None.
+    """
+    
+    tkwargs = {
+    "dtype": torch.double,
+    "device": torch.device("cpu"),
+    }
+
+    surrogate_model, df_train_x_scaled, (df_test_x_scaled, df_train_y_scaled, scaler_y) = _surrogate_preparation(filename=filename, 
+                                                                                  objectives=objectives,
+                                                                                  objective_mode=objective_mode,
+                                                                                  directory=directory)
+
+    cumulative_train_y = df_train_y_scaled.to_numpy().tolist()
+
+    train_x_torch = torch.from_numpy(df_train_x_scaled.astype(float).to_numpy()).to(**tkwargs)
+    test_x_torch = torch.from_numpy(df_test_x_scaled.astype(float).to_numpy()).to(**tkwargs)
+    
+    sampler = SobolQMCNormalSampler(num_samples=512, collapse_batch_dims=True, seed=42)
+
+    if len(df_train_y_scaled.columns) > 1:  # multiple objectives
+        # determine reference point
+        ref_mins = np.min(cumulative_train_y, axis=0)
+        ref_point = torch.tensor(ref_mins).double().to(**tkwargs)
+
+        # Generate acquisition function object. 
+        # Warnings ignored because it automatically generated a non-consequential numerical warning 
+        # for added jitter of ca. 10^-8 otherwise.
+        with HiddenPrints():  
+            acquisition_function = qNoisyExpectedHypervolumeImprovement(
+                model=surrogate_model, sampler=sampler,
+                ref_point=ref_point, alpha = 0.0,
+                incremental_nehvi = True, X_baseline=train_x_torch, prune_baseline=True
+            )
+
+    else:  # Acquisition function for single-objective optimization (qEI)
+        # Generate acquisition function object. Warnings ignored because it automatically generated 
+        # a numerical warning for added jitter of ca. 10^-8 otherwise.
+        with HiddenPrints():
+            train_y_torch = torch.tensor(cumulative_train_y).to(**tkwargs).double()
+            best_value = train_y_torch.max()
+            acquisition_function = qExpectedImprovement(
+                model = surrogate_model, 
+                best_f = best_value,
+                sampler = sampler
+                )
+            
+    # get the surrogate model mean values
+    mean = surrogate_model.posterior(test_x_torch).mean.detach().numpy()
+    # the mean values are standardized --> rescale to natural values
+    natural_mean = scaler_y.inverse_transform(mean)
+
+    # get the surrogate model variance values
+    variance = surrogate_model.posterior(test_x_torch).variance.detach().numpy()
+    # the variance values are standardized --> rescale to natural values
+    natural_variance = scaler_y.inverse_transform_var(variance)
+    # convert the standard deviation
+    std_dev = np.sqrt(natural_variance)
+
+    # get the expected (hypervolume) improvement values
+    exp_imp = acquisition_function(test_x_torch.unsqueeze(1)).detach().numpy()
+
+    objectives =df_train_y_scaled.columns.to_list()
+
+    exp_label = "Expected improvement" if len(objectives) == 1 else "Expected hypervolume improvement"
+
+    # set up a dataframe for the results
+    results_data = pd.DataFrame(np.nan, 
+                                index = df_test_x_scaled.index.to_list(),
+                                columns = [name for obj in objectives
+                                           for name in (f"Prediction_{obj}", f"Std. dev. of pred._{obj}")]
+                                           + [exp_label])
+
+    # fill in the data
+    results_data[exp_label] = exp_imp
+    for i,obj in enumerate(objectives):
+        # convert the sign of minimization obj back to the orginal state
+        if (obj in objective_mode):
+            if objective_mode[obj] == "min":  
+                natural_mean[:,i] = - natural_mean[:,i]
+        results_data[f"Prediction_{obj}"] = natural_mean[:,i]
+        results_data[f"Std. dev. of pred._{obj}"] = std_dev[:,i]
+
+    return results_data
+
+
 def draw_suggestions(df):
     """
     Extracts the suggested samples (priority = 1) as well as alternative suggestions (0 < priority < 1)
@@ -434,7 +494,7 @@ def draw_suggestions(df):
         DataFrame containing a priority list of suggested molecules
     """
 
-    def drawing_function(smiles_list):
+    def _drawing_function(smiles_list):
         """
         Draws the molecules provided in a list of smiles string.
         """
@@ -467,18 +527,122 @@ def draw_suggestions(df):
     if "." in suggestions[0]:  # multi-component reaction
         print("These are the suggested substrate combinations:")
         for suggestion in suggestions:
-            drawing_function(smiles_list=suggestion.split("."))
+            _drawing_function(smiles_list=suggestion.split("."))
         if alternative_suggestions:
             print("These are the requested alternative suggestions, sorted by descending priority:")
             for alternative_suggestion in alternative_suggestions:
-                drawing_function(smiles_list=alternative_suggestion.split("."))
+                _drawing_function(smiles_list=alternative_suggestion.split("."))
 
     else:  # single-component reaction
         print("These are the suggested substrates:")
-        drawing_function(smiles_list=suggestions)
+        _drawing_function(smiles_list=suggestions)
         if alternative_suggestions:
             print("These are the requested alternative suggestions, sorted by descending priority:")
-            drawing_function(smiles_list=alternative_suggestions)
+            _drawing_function(smiles_list=alternative_suggestions)
+
+
+def _surrogate_preparation(filename,
+                  objectives = None,
+                  objective_mode = {"all_obj":"max"},  
+                  directory = "."):
+    """
+    Function to prepare a surrogate model from a ScopeBO().run() output csv file.
+    Used in SHAP_analysis and expected_improvement_calc functions.
+    
+    See the doc string of these functions for input parameters.
+
+    Returns the surrogate model object as SingleTaskGP (1 objective) or ModelListGP (multiple objectives).
+    Returns the scaled training. 
+    Also scaled test features as well as the scaled training labels and the label scaler object as tuple.
+    """
+
+    tkwargs = {
+    "dtype": torch.double,
+    "device": torch.device("cpu"),
+    }
+
+     # Load the data
+    wdir = Path(directory)
+    df = pd.read_csv(wdir.joinpath(filename),index_col=0,header=0, float_precision = "round_trip")
+
+    # identify the objectives (containing PENDING entries) if none are given
+    if objectives is None:
+        objectives = df.columns[df.eq("PENDING").any()].to_list()
+
+    # get the data with labels and convert it to the require datatype.
+    idx_train = (df[~df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]).index.values
+
+    # test data is data without experimental results (= rows containing "PENDING") and which was not pruned (priority != -1)
+    df_noexperiments = df[df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]
+    idx_test = None
+    if "priority" not in df_noexperiments.columns.to_list():
+        idx_test = df_noexperiments.index  # assume no pruned samples if no priority column
+    else:
+        idx_test = df_noexperiments[df_noexperiments['priority'] != -1].index
+
+    # prepare x and y data for BO model by removing objectives and priority columns for the BO model inputs
+    df_train_y = df.loc[idx_train][objectives]
+    if 'priority' in df.columns.to_list():
+        df = df.drop(columns=['priority'])
+    df = df.drop(columns=objectives)
+    df_train_x = df.loc[idx_train]
+    df_test_x = df.loc[idx_test]
+
+
+    # Scaling of training features and conversion to tensor.
+    scaler_x = MinMaxScaler()
+    scaler_x.fit(df_train_x.to_numpy())
+    train_x_np = scaler_x.transform(df_train_x.to_numpy())
+
+
+    train_x_torch = torch.tensor(train_x_np.tolist()).to(**tkwargs).double()
+    df_train_x_scaled = pd.DataFrame(train_x_np,columns=df_train_x.columns)
+
+    df_test_x_scaled = None
+    if len(idx_test) != 0:
+        test_x_np = scaler_x.transform(df_test_x.to_numpy())  # transform test features with the same scaler as the train data
+        df_test_x_scaled = pd.DataFrame(test_x_np, index = df_test_x.index, columns=df_test_x.columns)
+
+    # Scaling of training outputs. 
+    train_y_np = df_train_y.astype(float).to_numpy()
+    min_obj = [obj for obj, value in objective_mode.items() if value == "min"]
+    if min_obj:
+        for obj in min_obj:
+            i = objectives.index(obj)
+            train_y_np[:, i] = -train_y_np[:, i]
+
+    scaler_y = EDBOStandardScaler()
+    train_y_np = scaler_y.fit_transform(train_y_np)
+    df_train_y_scaled = pd.DataFrame(train_y_np, index = df_train_y.index, columns=df_train_y.columns)
+    cumulative_train_y = train_y_np.tolist()
+
+    # Create GP models for each objective.
+    n_objectives = len(objectives)
+    individual_models = []
+    for i in range(n_objectives):
+        
+        # Convert training outputs for the objective in question to tensors.
+        train_y_i = np.array(cumulative_train_y)[:, i]
+        train_y_i = (np.atleast_2d(train_y_i).reshape(len(train_y_i), -1))
+        train_y_i_torch = torch.tensor(train_y_i.tolist()).to(**tkwargs).double()
+
+        # Optimize GP model using function from model.py.
+        gp, likelihood = build_and_optimize_model(train_x=train_x_torch, train_y=train_y_i_torch)
+
+        # Creating a single task GP model for the objective and storing it in individual_models list.
+        model_i = SingleTaskGP(train_X=train_x_torch, train_Y=train_y_i_torch,
+                            covar_module=gp.covar_module, likelihood=likelihood)
+        individual_models.append(model_i)
+
+    # Define the surrogate model.
+    surrogate_model = None
+    if n_objectives > 1:
+        surrogate_model = ModelListGP(*individual_models)
+    else:
+        surrogate_model = individual_models[0]
+
+    return surrogate_model, df_train_x_scaled, (df_test_x_scaled, df_train_y_scaled, scaler_y)
+
       
 
 class EDBOStandardScaler:
@@ -511,4 +675,14 @@ class EDBOStandardScaler:
         return x * [self.std] + [self.mu]
 
     def inverse_transform_var(self, x):
-        return x * [self.std]
+        std = np.asarray(self.std)
+        return x * (std**2)
+    
+class HiddenPrints:
+    def __enter__(self):
+        self._original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stdout = self._original_stdout
