@@ -375,6 +375,7 @@ def SHAP_analysis(filename,
 def exp_imp_calc(filename="reaction_space.csv",
                  objectives = None,
                  objective_mode = {"all_obj": "max"},
+                 pred_for_cut = False,
                  directory = "."):
     """
     Calculates the predicted mean, variance, and expected improvement for all test substrates
@@ -391,6 +392,9 @@ def exp_imp_calc(filename="reaction_space.csv",
             Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
             Code will assume maximization for all non-listed objectives
             Default is {"all_obj":"max"} --> all objectives are maximized
+        pred_for_cut: Boolean
+            Default = False
+            Show predictions also for cut samples if True
         results_filename: str or None
             if provided, saves the results dataframe as a csv file under this name
         directory: str
@@ -410,6 +414,7 @@ def exp_imp_calc(filename="reaction_space.csv",
     surrogate_model, df_train_x_scaled, (df_test_x_scaled, df_train_y_scaled, scaler_y) = _surrogate_preparation(filename=filename, 
                                                                                   objectives=objectives,
                                                                                   objective_mode=objective_mode,
+                                                                                  pred_for_cut = pred_for_cut,
                                                                                   directory=directory)
 
     cumulative_train_y = df_train_y_scaled.to_numpy().tolist()
@@ -482,6 +487,10 @@ def exp_imp_calc(filename="reaction_space.csv",
         results_data[f"Prediction_{obj}"] = natural_mean[:,i]
         results_data[f"Std. dev. of pred._{obj}"] = std_dev[:,i]
 
+    # sort by predicted mean
+    results_data.sort_values(by = f"Prediction_{objectives[0]}", axis = 0, 
+                             ascending =False, inplace = True)
+
     return results_data
 
 
@@ -543,7 +552,8 @@ def draw_suggestions(df):
 
 def _surrogate_preparation(filename,
                   objectives = None,
-                  objective_mode = {"all_obj":"max"},  
+                  objective_mode = {"all_obj":"max"},
+                  pred_for_cut =False, 
                   directory = "."):
     """
     Function to prepare a surrogate model from a ScopeBO().run() output csv file.
@@ -575,6 +585,9 @@ def _surrogate_preparation(filename,
     # test data is data without experimental results (= rows containing "PENDING") and which was not pruned (priority != -1)
     df_noexperiments = df[df.apply(lambda r: r.astype(str).str.contains('PENDING', case=False).any(), axis=1)]
     idx_test = None
+    # remove the priority column in case that predictions are also desired for cut samples
+    if pred_for_cut & ("priority" in df_noexperiments.columns.to_list()):
+        df_noexperiments = df_noexperiments.drop(columns=["priority"])
     if "priority" not in df_noexperiments.columns.to_list():
         idx_test = df_noexperiments.index  # assume no pruned samples if no priority column
     else:

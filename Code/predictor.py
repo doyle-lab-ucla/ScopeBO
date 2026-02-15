@@ -250,6 +250,7 @@ class ScopeBO:
                         print_pred = True,
                         visualize = True,
                         obj_bounds = None,
+                        show_pred_for_cut = False,
                         figsize = (10,8),
                         dpi = 600,
                         cbar_title = None,  
@@ -306,6 +307,9 @@ class ScopeBO:
         obj_bounds : tuple or list, optional
             (max, min) values to manually set the colorbar range in the plot.
             If None, the min/max are taken from the observed evaluated samples.
+        show_pred_for_cut: Boolean
+            Default = False
+            Show predictions also for cut samples if True
         figsize : tuple, default=(10, 8)
             Size of the generated UMAP figure in inches.
         dpi : int, default=600
@@ -333,6 +337,7 @@ class ScopeBO:
                       obj_to_show = objective,
                       obj_bounds = obj_bounds,
                       objectives = [objective] + further_objectives,
+                      pred_for_cut = show_pred_for_cut,
                       figsize = figsize,
                       dpi = dpi,
                       cbar_title = cbar_title,
@@ -1237,6 +1242,7 @@ class ScopeBO:
                              visualize = True,
                              obj_to_show = None,
                              obj_bounds = None,
+                             pred_for_cut = False,
                              figsize = (10,8),
                              dpi = 600,
                              cbar_title = None,
@@ -1270,6 +1276,9 @@ class ScopeBO:
             obj_bounds : tuple or list, optional
                 (max, min) values to manually set the colorbar range for `obj_to_show`.
                 If None, the min/max are taken from the observed evaluated samples.
+            pred_for_cut: Boolean
+                Default = False
+                Show predictions also for cut samples if True
             figsize : tuple, default=(10, 8)
                 Size of the generated UMAP figure in inches.
             dpi : int, default=600
@@ -1289,6 +1298,7 @@ class ScopeBO:
         df =  exp_imp_calc(filename=filename,
                            objectives = objectives,
                            objective_mode = objective_mode,
+                           pred_for_cut = pred_for_cut,
                            directory = directory)
         
         # save file if requested
@@ -1302,6 +1312,7 @@ class ScopeBO:
                       obj_to_show = obj_to_show,
                       obj_bounds = obj_bounds,
                       objectives = objectives,
+                      pred_for_cut = pred_for_cut,
                       figsize = figsize,
                       dpi = dpi,
                       cbar_title = cbar_title,

@@ -223,6 +223,7 @@ def UMAP_predictions(filename,
                       obj_to_show = None,
                       obj_bounds = None,
                       objectives = None,
+                      pred_for_cut = False,
                       figsize = (10,8),
                       dpi = 600,
                       cbar_title = None,
@@ -245,6 +246,9 @@ def UMAP_predictions(filename,
         List of column names containing objective values (including "PENDING").
         If None, they are automatically inferred from columns containing
         "PENDING" strings.
+    pred_for_cut: Boolean
+        Default = False
+        Show predictions also for cut samples if True
     figsize : tuple, default=(10, 8)
         Size of the generated UMAP figure in inches.
     dpi : int, default=600
@@ -264,7 +268,12 @@ def UMAP_predictions(filename,
     # separate the observed, cut, and predicted samples
     df_seen = df_umap.loc[df_umap.index.isin(df_scope[df_scope[obj_name] != "PENDING"].index.to_list())].copy()
     df_seen[obj_name] = df_seen[obj_name].astype(float)
-    df_cut = df_umap[df_umap.index.isin(df_scope[df_scope["priority"] == -1].index.to_list())].copy()
+    prio_val = -1  # priority value corresponding to cut values
+    if pred_for_cut:
+        # unrealistic priority value in case predictions for cut samples are to be shown
+        # will result in empty df for cut samples
+        prio_val = 42  
+    df_cut = df_umap[df_umap.index.isin(df_scope[df_scope["priority"] == prio_val].index.to_list())].copy()
     df_unseen = df_umap.loc[(~df_umap.index.isin(df_seen.index.to_list())) &
                             (~df_umap.index.isin(df_cut.index.to_list()))].copy()
 
@@ -305,10 +314,11 @@ def UMAP_predictions(filename,
             std_max = 1*10**(-10)  # make sure there is a range of std values to avoid numeric errors
         size_vals = [size_min + (std_val - std_min) * (size_max - size_min) / (std_max - std_min)
                 for std_val in std_vals]
-        
-    # plot the cut points
-    plt.scatter(df_cut["UMAP1"], df_cut["UMAP2"], s=100, edgecolor="k", marker = "X",
-                color=doyle_colors[4], alpha=0.6, linewidth = 0.3, zorder=0, label = "cut")
+    
+    if not pred_for_cut:
+        # plot the cut points
+        plt.scatter(df_cut["UMAP1"], df_cut["UMAP2"], s=100, edgecolor="k", marker = "X",
+                    color=doyle_colors[4], alpha=0.6, linewidth = 0.3, zorder=0, label = "cut")
 
     # plot the predicted points
     plt.scatter(df_unseen["UMAP1"], df_unseen["UMAP2"], c=df_unseen[obj_name],
