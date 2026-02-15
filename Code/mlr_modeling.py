@@ -71,7 +71,7 @@ def regression_modeling(filename, objective,
         working directory
     --------------------
     Prints the best model and its statistics.
-    Returns the predictions.
+    Returns the predictions and the model settings.
 
     """
 
