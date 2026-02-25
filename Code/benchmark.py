@@ -1143,9 +1143,12 @@ class Benchmark:
         for _, row in df_data.iterrows():
             samples = row["eval_samples"]
             values = row[f"obj_values {objectives}"]
-            row_dict = {sample: list(vals)
-                for sample, vals in zip(samples, zip(*values))}
-            sample_dict.update(row_dict)
+            if len(objectives) > 1:
+                row_dict = {sample: list(vals)
+                    for sample, vals in zip(samples, zip(*values))}
+                sample_dict.update(row_dict)
+            else:
+                sample_dict.update(dict(zip(samples,values)))
         
         def _generate_representation(smiles_list):
             """"Generate aligned 2D representations of molecules from SMILES strings."""
