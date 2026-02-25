@@ -1141,9 +1141,11 @@ class Benchmark:
         # Get a dictionary that maps the samples to the obj_values.
         sample_dict = {}
         for _, row in df_data.iterrows():
-            labels = row["eval_samples"]
+            samples = row["eval_samples"]
             values = row[f"obj_values {objectives}"]
-            sample_dict.update(dict(zip(labels, values)))
+            row_dict = {sample: list(vals)
+                for sample, vals in zip(samples, zip(*values))}
+            sample_dict.update(row_dict)
         
         def _generate_representation(smiles_list):
             """"Generate aligned 2D representations of molecules from SMILES strings."""
@@ -1191,7 +1193,10 @@ class Benchmark:
                 if round_values is None:
                     legends = [f"{sample_dict[smiles]*scale_values}"+label_suffix for smiles in smiles_list]
                 else:
-                    legends = [f"{round(sample_dict[smiles]*scale_values,round_values)}"+label_suffix for smiles in smiles_list]
+                    if len(objectives) == 1:
+                        legends = [f"{round(sample_dict[smiles]*scale_values,round_values)}"+label_suffix for smiles in smiles_list]
+                    else:
+                        legends = [f"{[str(round(x*scale_values,round_values)) + label_suffix for x in sample_dict[smiles]]}" for smiles in smiles_list]
                 depiction = Draw.MolsToGridImage(
                     mol_list,
                     molsPerRow=molsPerRow,
