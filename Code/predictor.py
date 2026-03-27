@@ -419,6 +419,7 @@ class ScopeBO:
         # save file if requested
         if results_filename is not None:
             df.to_csv(results_filename, index=True, header=True)
+            print("Predictions saved as " + results_filename + ".")
 
         # plot results on a UMAP if requested
         if visualize:
