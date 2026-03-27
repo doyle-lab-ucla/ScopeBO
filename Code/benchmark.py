@@ -179,7 +179,7 @@ class Benchmark:
         idx_to_keep: list or None
             list of indices of the labelled dataframe which won't be removed at the beginning of the scope run
             Enables to "hot-start" a scope with prior data.
-            Default is None (remove all idx and start from the scope from scratch).
+            Default is None (remove all idx and start the scope from scratch).
         objective_mode: dict
             Dictionary of objective modes for objectives
             Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
@@ -262,7 +262,9 @@ class Benchmark:
             for obj in objectives:
                 df_unlabelled.loc[~df_unlabelled.index.isin(idx_to_keep),obj] = "PENDING"
                 print("The scope will be hot-started with the following samples:")
-                print(f"{df_unlabelled.index[~df_unlabelled.isin(['PENDING']).any(axis=1)].tolist()}") 
+                print(f"{df_unlabelled.index[~df_unlabelled.isin(['PENDING']).any(axis=1)].tolist()}")
+            # also make a dummy priority column
+            df_unlabelled["priority"] = 0
         else:
             df_unlabelled.drop(columns=objectives,inplace=True)
 
@@ -1287,7 +1289,8 @@ class Benchmark:
         return shap_values,mean_abs_shap_values
     
 
-    def objective_distribution(self,name_results, objective_bounds = (0,100), nr_bins = 10, norm_axis = None, directory = ".", print_figure = True):
+    def objective_distribution(self,name_results, objective_bounds = (0,100), scale_objectives = 1,
+                               nr_bins = 10, norm_axis = None, directory = ".", print_figure = True):
         """
         Compute and visualize the distribution of objective values across the different random seeds.
         NOTE: Currently only supports single-objective optimization.
@@ -1300,6 +1303,9 @@ class Benchmark:
         objective_bounds : tuple of (float, float)
             Lower and upper bounds of the objective value range for binning.
             Default is (0, 100).
+        scale_objectives: int
+            Default = 1.
+            Scale the objective values for the plot.
         nr_bins : int
             Number of equally spaced bins to divide the objective range into.
             Default is 10.
@@ -1327,7 +1333,7 @@ class Benchmark:
         objectives = Benchmark.find_objectives(name_results,directory)
 
         # define the bins
-        bins = np.linspace(objective_bounds[0],objective_bounds[1],nr_bins+1)
+        bins = np.linspace(objective_bounds[0],objective_bounds[1],nr_bins+1) * scale_objectives
 
         # list to store the count results
         counts = []
@@ -1340,7 +1346,7 @@ class Benchmark:
 
             # get the objective values of each entry
             df_raw[f"obj_values {objectives}"] = df_raw[f"obj_values {objectives}"].apply(ast.literal_eval)
-            obj_values = [value for round_list in [df_raw.loc[round,f"obj_values {objectives}"] for round in df_raw.index] for value in round_list]
+            obj_values = [value * scale_objectives for round_list in [df_raw.loc[round,f"obj_values {objectives}"] for round in df_raw.index] for value in round_list]
 
             # get the counts for the bins
             counts.append(np.histogram(obj_values,bins=bins)[0])

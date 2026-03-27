@@ -182,7 +182,7 @@ def UMAP_suggestions(filename,
         else:
             # plot the sugggested samples the same way as the neutral samples
             plt.scatter(
-                df_alt["UMAP1"], df_alt["UMAP2"], s=40, edgecolor="k", marker = "o",
+                df_sugg["UMAP1"], df_sugg["UMAP2"], s=40, edgecolor="k", marker = "o",
                 color=doyle_colors[6], alpha=0.8, linewidth = 0.3, zorder=1)
             
         # check if alternative sugegstions should be highlighted

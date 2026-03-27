@@ -39,6 +39,7 @@ class ScopeBO:
         - Creating the reaction space from reactant feature files (create_reaction_space function)
         - Analyzing feature importance using SHAP
         - Predicting reaction performance using multivariable linear regression (predict_performance function)
+        - Predicting reaction performance using a Gaussian process (expected_improvement function)
         - Visualizing the reaction space using UMAP (visualize function)
         - Calculating the Vendi score for evaluated samples (get_vendi_score function)
         - Running the ScopeBO optimization loop to suggest experiments (run function)
@@ -344,6 +345,95 @@ class ScopeBO:
                       directory = directory)
         
         return df_pred, model_settings
+    
+
+    @staticmethod
+    def expected_improvement(filename="reaction_space.csv",
+                             objectives = None,
+                             objective_mode = {"all_obj": "max"},
+                             results_filename = "gp_predictions.csv",
+                             visualize = True,
+                             obj_to_show = None,
+                             obj_bounds = None,
+                             pred_for_cut = True,
+                             figsize = (10,8),
+                             dpi = 600,
+                             cbar_title = None,
+                             directory = "."):
+        """
+        Uses the ScopeBO surrogate model (a Gaussian process) to calculate the predicted mean, 
+        standard deviation, and expected improvement for all test substrates from a ScopeBO().run() 
+        output csv file.
+        Plots the results on a UMAP if requested.
+        ---------------------------------------------------------------------
+        Inputs:
+            filename: str
+                filename of the reaction space csv file including experimental outcomes
+            objectives: list or None
+                list of the objectives. E. g.: [yield,ee]
+                If None (default): will try to infer the objectives by looking for columns with the value "PENDING"
+            objective_mode: dict
+                Dictionary of objective modes for objectives
+                Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
+                Code will assume maximization for all non-listed objectives
+                Default is {"all_obj":"max"} --> all objectives are maximized
+            results_filename: str
+                if not None, saves the results dataframe as a csv file under this name
+                Default: "gp_predictions.csv"
+            visualize: Boolean (Default = True)
+                plot the predicted objective values if True
+                shows the substrates as points on a 2D UMAP with color corresponding to performance
+                experimental data is shown with squares (shown performance = experimental, not predicted)
+                test data is shown with circles; the size corresponds to the standard deviation
+            obj_to_show : str or None
+                Name of the objective that is visualized (if visualize == True)
+                If None (Default), the first listed objective is used.
+            obj_bounds : tuple or list, optional
+                (max, min) values to manually set the colorbar range for `obj_to_show`.
+                If None, the min/max are taken from the observed evaluated samples.
+            pred_for_cut: Boolean
+                Default = True
+                Show predictions also for cut samples if True
+            figsize : tuple, default=(10, 8)
+                Size of the generated UMAP figure in inches.
+            dpi : int, default=600
+                Resolution of the output figure.
+            cbar_title : str, optional
+                Custom title for the colorbar. If None, uses the objective name.
+            directory: str
+                Define working directory. Default is current directory.
+        ---------------------------------------------------------------------
+        Returns:
+        Dataframe with the compound name as index and the predicted mean, variance, and expected 
+        improvement as columns.
+        Also saves this data as a csv file if results_filename is not None.
+        """
+
+        # call the function that is in utils.py
+        df =  exp_imp_calc(filename=filename,
+                           objectives = objectives,
+                           objective_mode = objective_mode,
+                           pred_for_cut = pred_for_cut,
+                           directory = directory)
+        
+        # save file if requested
+        if results_filename is not None:
+            df.to_csv(results_filename, index=True, header=True)
+
+        # plot results on a UMAP if requested
+        if visualize:
+            UMAP_predictions(filename = filename,
+                      df_pred = df,
+                      obj_to_show = obj_to_show,
+                      obj_bounds = obj_bounds,
+                      objectives = objectives,
+                      pred_for_cut = pred_for_cut,
+                      figsize = figsize,
+                      dpi = dpi,
+                      cbar_title = cbar_title,
+                      directory = directory)
+
+        return df
 
 
     @staticmethod
@@ -1233,89 +1323,3 @@ class ScopeBO:
         priority_list = df["priority"]
 
         return priority_list
-    
-    @staticmethod
-    def expected_improvement(filename="reaction_space.csv",
-                             objectives = None,
-                             objective_mode = {"all_obj": "max"},
-                             results_filename = None,
-                             visualize = True,
-                             obj_to_show = None,
-                             obj_bounds = None,
-                             pred_for_cut = False,
-                             figsize = (10,8),
-                             dpi = 600,
-                             cbar_title = None,
-                             directory = "."):
-        """
-        Calculates the predicted mean, variance, and expected improvement for all test substrates
-        from a ScopeBO().run() output csv file.
-        Plots the results on a UMAP if requested
-        ---------------------------------------------------------------------
-        Inputs:
-            filename: str
-                filename of the reaction space csv file including experimental outcomes
-            objectives: list or None
-                list of the objectives. E. g.: [yield,ee]
-                If None (default): will try to infer the objectives by looking for columns with the value "PENDING"
-            objective_mode: dict
-                Dictionary of objective modes for objectives
-                Provide dict with value "min" in case of a minimization task (e. g. {"cost":"min"})
-                Code will assume maximization for all non-listed objectives
-                Default is {"all_obj":"max"} --> all objectives are maximized
-            results_filename: str or None (Default)
-                if provided, saves the results dataframe as a csv file under this name
-            visualize: Boolean (Default = True)
-                plot the predicted objective values if True
-                shows the substrates as points on a 2D UMAP with color corresponding to performance
-                experimental data is shown with squares (shown performance = experimental, not predicted)
-                test data is shown with circles; the size corresponds to the standard deviation
-            obj_to_show : str or None
-                Name of the objective that is visualized (if visualize == True)
-                If None (Default), the first listed objective is used.
-            obj_bounds : tuple or list, optional
-                (max, min) values to manually set the colorbar range for `obj_to_show`.
-                If None, the min/max are taken from the observed evaluated samples.
-            pred_for_cut: Boolean
-                Default = False
-                Show predictions also for cut samples if True
-            figsize : tuple, default=(10, 8)
-                Size of the generated UMAP figure in inches.
-            dpi : int, default=600
-                Resolution of the output figure.
-            cbar_title : str, optional
-                Custom title for the colorbar. If None, uses the objective name.
-            directory: str
-                Define working directory. Default is current directory.
-        ---------------------------------------------------------------------
-        Returns:
-        Dataframe with the compound name as index and the predicted mean, variance, and expected 
-        improvement as columns.
-        Also saves this data as a csv file if results_filename is not None.
-        """
-
-        # call the function that is in utils.py
-        df =  exp_imp_calc(filename=filename,
-                           objectives = objectives,
-                           objective_mode = objective_mode,
-                           pred_for_cut = pred_for_cut,
-                           directory = directory)
-        
-        # save file if requested
-        if results_filename is not None:
-            df.to_csv(results_filename, index=True, header=True)
-
-        # plot results on a UMAP if requested
-        if visualize:
-            UMAP_predictions(filename = filename,
-                      df_pred = df,
-                      obj_to_show = obj_to_show,
-                      obj_bounds = obj_bounds,
-                      objectives = objectives,
-                      pred_for_cut = pred_for_cut,
-                      figsize = figsize,
-                      dpi = dpi,
-                      cbar_title = cbar_title,
-                      directory = directory)
-
-        return df
