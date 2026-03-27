@@ -304,6 +304,7 @@ def UMAP_predictions(filename,
     norm = plt.Normalize(vmin,vmax)
 
     # set the size for predicted values based on their standard deviation if available
+    # smaller points have a higher standad deviation (i. e. more uncertain predictions)
     size_vals = [40] * len(df_unseen)
     if pred_type == "ei":
         size_min, size_max = 50, 200
@@ -311,9 +312,11 @@ def UMAP_predictions(filename,
         std_min = np.min(std_vals)
         std_max = np.max(std_vals)
         if std_max - std_min == 0:
-            std_max = 1*10**(-10)  # make sure there is a range of std values to avoid numeric errors
-        size_vals = [size_min + (std_val - std_min) * (size_max - size_min) / (std_max - std_min)
-                for std_val in std_vals]
+            # no standard deviation range, set a default size
+            size_vals = [(size_min+size_max)/2] * len(df_unseen)
+        else:
+            size_vals = [size_min + (std_max - std_val) * (size_max - size_min) / (std_max - std_min)
+                    for std_val in std_vals]
     
     if not pred_for_cut:
         # plot the cut points
