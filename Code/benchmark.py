@@ -1290,7 +1290,7 @@ class Benchmark:
     
 
     def objective_distribution(self,name_results, objective_bounds = (0,100), scale_objectives = 1,
-                               nr_bins = 10, norm_axis = None, directory = ".", print_figure = True):
+                               nr_bins = 10, norm_axis = None, rotation_xticks = 0, directory = ".", print_figure = True):
         """
         Compute and visualize the distribution of objective values across the different random seeds.
         NOTE: Currently only supports single-objective optimization.
@@ -1312,6 +1312,8 @@ class Benchmark:
         norm_axis : int or None
             Max value for the histogram count axis.
             If None (Default), the axis max value is determined automatically.
+        rotation_xticks: int
+            Rotation angle for the x-axis tick labels. Default is 0 (no rotation).
         directory : str
             Working directory. Default is current directory.
         print_figure : bool
@@ -1369,7 +1371,7 @@ class Benchmark:
             if norm_axis is not None:
                 plt.ylim(0, norm_axis)
             plt.title('Average Objective Distribution with Standard Deviation')
-            plt.xticks(bins)
+            plt.xticks(bins, rotation = rotation_xticks)
             plt.grid(axis='y',zorder=1)
             plt.show()
         
