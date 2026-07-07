@@ -19,7 +19,8 @@ A scope selection tool for organic chemistry that balances scope performance and
 ### Installation:
 
 (1) Install [Miniconda](https://www.anaconda.com/download/success "Download link").
-    *Note*: We noticed that Anaconda can lead to installation problems due to using a different environment solver.
+
+*Note*: We noticed that Anaconda can lead to installation problems due to using a different environment solver.
 
 (2) Download this repository.
 
@@ -54,7 +55,10 @@ See the file "installation_instructions.txt" for more detailed instructions.
 
 (1) Before first use: Follow the installation instructions steps 1–4 (see above).
 
-(2) Double-click the app (ScopeBO_App.app on MacOS or ScopeBO_App.bat on Windows).
+(2) Double-click the app (ScopeBO_App.zip on MacOS or ScopeBO_App.bat on Windows).
+
+*Note*: Unpack the zip folder on MacOS by double-clicking and then open the unpacked ScopeBO_App.app.
+
 
 ---
 
